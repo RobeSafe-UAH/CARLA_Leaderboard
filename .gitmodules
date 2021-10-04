@@ -2,3 +2,7 @@
 	path = catkin_ws/src/t4ac_mapping_layer
 	url = git@github.com:RobeSafe-UAH/Techs4AgeCar-Mapping-Layer.git
 	branch = carla_challenge_2021
+[submodule "catkin_ws/src/t4ac_planning_layer"]
+	path = catkin_ws/src/t4ac_planning_layer
+	url = git@github.com:RobeSafe-UAH/Techs4AgeCar-Planning-Layer.git
+	branch = master
