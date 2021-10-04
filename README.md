@@ -7,7 +7,11 @@ Winners of each track are notified: November 22nd, 2021
 Video presentation submission: December 1st, 2021
 Results presented at ML4AD workshop: December 13th, 2021
 
-How to add a submodule?
+**How to clone this repository?**
+cd /workspace (in the docker image)
+git clone --recursive -b 2021_carla_challenge git@github.com:RobeSafe-UAH/CARLA_Leaderboard.git team_code 
+
+**How to add a submodule?**
 
 git submodule add your_ssh (make sure you got the ssh keys)
 e.g. cd /workspace/team_code/catkin_ws/src/ && git submodule add -b 2021_carla_challenge git@github.com:RobeSafe-UAH/Techs4AgeCar-Mapping-Layer.git
