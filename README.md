@@ -9,5 +9,5 @@ Results presented at ML4AD workshop: December 13th, 2021
 
 How to add a submodule?
 
-git submodule add your_https
-e.g. cd /workspace/team_code/catkin_ws/src/ && git submodule add https://github.com/RobeSafe-UAH/t4ac_lqr_ros -b carla_challenge_2021
+git submodule add your_ssh (make sure you got the ssh keys)
+e.g. cd /workspace/team_code/catkin_ws/src/ && git submodule add -b 2021_carla_challenge git@github.com:RobeSafe-UAH/Techs4AgeCar-Mapping-Layer.git
