@@ -1,0 +1,7 @@
+<launch>
+    <arg name="t4ac_control_ros_node" value="/t4ac/control"/>
+    <group ns="$(arg t4ac_control_ros_node)">
+        <param name="node_name" type="string" value="throttle_node" />
+    </group>
+    <node pkg="control_test" type="throttle_node.py" name="throttle_node" output="screen"/>
+</launch>
