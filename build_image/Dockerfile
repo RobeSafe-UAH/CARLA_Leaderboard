@@ -68,14 +68,15 @@ RUN chmod +x /workspace/leaderboard/scripts/run_evaluation.sh
 RUN mkdir -p /workspace/results
 
 ## Setup Auxiliar alias for Local operation
-RUN /bin/bash -c 'echo 'alias RUN_EVALUATION="cd /workspace && ./clear_run_evaluation.sh && clear && cd /workspace/leaderboard/scripts && ./run_evaluation.sh"' >> ~/.bashrc ;\
-                  echo 'alias CLEAR_EVALUATION="cd /workspace && ./clear_run_evaluation.sh"' >> ~/.bashrc;'
+RUN echo "alias RUN_EVALUATION='cd /workspace/team_code/ && ./clear_run_evaluation.sh && clear && cd /workspace/leaderboard/scripts && ./run_evaluation.sh'" >> ~/.bashrc && \
+    echo "alias CLEAR_EVALUATION='cd /workspace/team_code/ && ./clear_run_evaluation.sh'" >> ~/.bashrc
 
 ## Setup ROS
-RUN mkdir -p /workspace/team_code/catkin_ws/src
 RUN /bin/bash -c 'source /opt/ros/noetic/setup.bash;\
                   cd /workspace/team_code/catkin_ws;\
                   catkin_make -j8;'
+RUN /bin/bash -c 'echo "source /opt/ros/noetic/setup.bash" >> ~/.bashrc ;\
+                  echo "source /workspace/team_code/catkin_ws/devel/setup.bash" >> ~/.bashrc;'
 
 ## ROS Entrypoint
 ADD agent_sources.sh /root/

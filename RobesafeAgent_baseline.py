@@ -39,13 +39,11 @@ from scipy import interpolate
 # Custom functions imports
 
 from modules.geometric_functions import euler_to_quaternion, unit_vector
-from modules.bridge_functions import get_input_route_list, 
+from modules.bridge_functions import get_input_route_list
 
-Kp = 0.175
-Ki = 0.002
-
-current_time = 0
-previous_time = 0
+sys.path.insert(0,'/workspace/team_code/catkin_ws/src/t4ac_mapping_planning/t4ac_map_builder/src')
+from builder_classes import T4ac_Location
+from path_planner import PathPlanner
 
 # Auxiliar functions
 
@@ -61,11 +59,32 @@ class RobesafeAgent(AutonomousAgent):
     def setup(self, path_to_conf_file):
         print("\033[1;31m"+"Start init configuration: "+'\033[0;m')
 
+        ## Layers variables
+
+        self.time_sleep = 1
+
+        # Control
+
+        self.Kp = 0.175
+        self.Ki = 0.002
+        self.error_sum = 0
+        self.steer_cmd = 0
+        self.speed_cmd = 0
+
+        # Mapping-Planning
+
+        self.origin = utm.from_latlon(0, 0) # lat_origin, lon_origin
+        self.offset_compass = -5/2*math.pi
+        self.trajectory_flag = False
+        self.flag_path_planner = False
+        self.hd_map = []
+        self.waypoints = []
+
         ### Track
 
         self.track = Track.MAP
 
-        ### ROS communications
+        ## ROS communications
 
         # Publishers
 
@@ -77,9 +96,7 @@ class RobesafeAgent(AutonomousAgent):
         self.sub_steer = rospy.Subscriber('/control/steer', Float64, self.read_steer_callback)
         self.sub_speed = rospy.Subscriber('/control/speed', Float64, self.read_speed_callback)
 
-        ### Launch the architecture
-
-        time_sleep = 1
+        ## Launch the architecture
 
         self.uuid = roslaunch.rlutil.get_or_generate_uuid(None, False)
         roslaunch.configure_logging(self.uuid)
@@ -100,22 +117,21 @@ class RobesafeAgent(AutonomousAgent):
 
         rospy.loginfo("started")
 
-        time.sleep(time_sleep)
+        ## Init the node
 
         rospy.init_node('robesafe_agent', anonymous=False)
-
-        ### Init the node
 
         print("\033[1;31m"+"End init configuration: "+'\033[0;m')
 
     # Specify your sensors
 
     def sensors(self):
-        sensors =  [{'type': 'sensor.other.gnss', 'x': -1.425, 'y': 0.0, 'z': 1.60, 'id': 'GPS'},
+        sensors =  [
+                    {'type': 'sensor.other.gnss', 'x': -1.425, 'y': 0.0, 'z': 1.60, 'id': 'GPS'},
                     {'type': 'sensor.other.imu', 'x': -1.425, 'y': 0.0, 'z': 1.60, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'id': 'IMU'},
                     {'type': 'sensor.opendrive_map', 'reading_frequency': 1, 'id': 'OpenDRIVE'},
                     {'type': 'sensor.speedometer',  'reading_frequency': 20, 'id': 'Speed'},
-                    ]
+                   ]
                     
         return sensors
 
@@ -138,7 +154,7 @@ class RobesafeAgent(AutonomousAgent):
             self.hd_map = (input_data['OpenDRIVE'][1])
             self.hd_map = self.hd_map['opendrive'].split('\n')
             self.trajectory_flag = True
-            self.input_route_list = self.get_input_route_list(self._global_plan)
+            self.input_route_list = get_input_route_list(self.origin, self._global_plan)
 
         # Callbacks
 
@@ -245,7 +261,7 @@ class RobesafeAgent(AutonomousAgent):
         Return the current state of the vehicle regarding the control layer
         """
         error_speed = self.speed_cmd - actual_speed  # distance away from setpoint
-        self.error_sum += (error_speed*Ki)
+        self.error_sum += (error_speed*self.Ki)
 
         if (self.error_sum > 0.5):
             self.error_sum = 0.5
@@ -254,7 +270,7 @@ class RobesafeAgent(AutonomousAgent):
 
         # Throttle
 
-        throttle = (error_speed*Kp) + self.error_sum
+        throttle = (error_speed*self.Kp) + self.error_sum
 
         if (self.speed_cmd == 0):
             self.error_sum = 0  # Reset PI
@@ -276,7 +292,7 @@ class RobesafeAgent(AutonomousAgent):
         control.brake = brake
         control.hand_brake = False
 
-        #print("Speed: ",self.speed_cmd, "  Steer: ", self.steer_cmd)
+        # print("Speed: ",self.speed_cmd, "  Steer: ", self.steer_cmd)
 
         return control
 
@@ -304,5 +320,4 @@ class RobesafeAgent(AutonomousAgent):
         self.localization_launch.shutdown()
         self.control_launch.shutdown()
 
-        time.sleep(2)
         pass

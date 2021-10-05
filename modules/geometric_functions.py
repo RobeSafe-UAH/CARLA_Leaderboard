@@ -1,3 +1,5 @@
+import numpy as np
+
 def euler_to_quaternion(roll, pitch, yaw):
 	"""
     Return the orientation of our ego-vehicle in quaternion based on Euler angles (Roll = x, Pitch = y, Yaw = z)
