@@ -1,3 +1,6 @@
+# Created on Tue Oct 5 15:59:37 2021
+# @author: RobeSafe research group
+
 FROM nvidia/cuda:11.2.2-devel-ubuntu20.04
 
 ARG HTTP_PROXY
@@ -17,6 +20,8 @@ RUN apt-get update && DEBIAN_FRONTEND="noninteractive" apt-get install -y --no-i
          curl \
          htop \
          vim \
+         tree \
+         htop \
          ca-certificates \
          libjpeg-dev \
 	     libpng16-16 \
@@ -29,8 +34,9 @@ RUN apt-get update && DEBIAN_FRONTEND="noninteractive" apt-get install -y --no-i
          pip3 install --upgrade pip && \
          rm -rf /var/lib/apt/lists/*
 
-## Install ros
 WORKDIR /workspace/
+
+## Install ros
 ADD install_ros.sh /workspace/install_ros.sh
 RUN chmod +x install_ros.sh && sh install_ros.sh
 
@@ -38,8 +44,13 @@ RUN chmod +x install_ros.sh && sh install_ros.sh
 ADD requirements.txt /workspace/requirements.txt
 RUN pip3 install -r requirements.txt
 
-## Setup global ENV variables
-ADD PythonAPI /workspace/CARLA/PythonAPI
+## Remove aux_files and copy team_code
+RUN rm -rf install_ros.sh requirements.txt
+COPY .tmp ./team_code/
+
+## Copy PythonAPI and setup global ENV variables
+RUN mkdir -p CARLA && cp -R ./team_code/build_image/PythonAPI ./CARLA/PythonAPI
+RUN ls -la /workspace/CARLA/PythonAPI/carla
 RUN cd /workspace/CARLA/PythonAPI/carla/dist && \
     mv carla-0.9.10-py3.7-linux-x86_64.egg carla-leaderboard-py3x.egg
 ENV CARLA_ROOT="/workspace/CARLA" SCENARIO_RUNNER_ROOT="/workspace/scenario_runner" \
@@ -53,24 +64,21 @@ ENV TEAM_AGENT="${TEAM_CODE_ROOT}/RobesafeAgent.py" CHALLENGE_TRACK_CODENAME="MA
     HTTP_PROXY="" HTTPS_PROXY="" http_proxy="" https_proxy=""
 
 ## Setup CARLA
-ADD setup_carla.sh /workspace/
-RUN chmod +x setup_carla.sh && sh setup_carla.sh
-
-## Give permissions
-RUN mkdir -p /workspace/results
+RUN cd ./team_code/build_image/ && chmod +x setup_carla.sh && sh setup_carla.sh
 RUN chmod +x /workspace/leaderboard/scripts/run_evaluation.sh
+RUN mkdir -p /workspace/results
+
+## Setup Auxiliar alias for Local operation
+RUN /bin/bash -c 'echo 'alias RUN_EVALUATION="cd /workspace && ./clear_run_evaluation.sh && clear && cd /workspace/leaderboard/scripts && ./run_evaluation.sh"' >> ~/.bashrc ;\
+                  echo 'alias CLEAR_EVALUATION="cd /workspace && ./clear_run_evaluation.sh"' >> ~/.bashrc;'
 
 ## Setup ROS
 RUN mkdir -p /workspace/team_code/catkin_ws/src
-RUN /bin/bash -c 'source /opt/ros/noetic/setup.bash;\
-    cd /workspace/team_code/catkin_ws;\
-    catkin_make -j8;\
-    echo "source /workspace/team_code/catkin_ws/devel/setup.bash" >> ~/.bashrc'
+RUN /bin/bash -c 'cd /workspace/team_code/catkin_ws;\
+                 catkin_make -j8;'
 
-## Entrypoint
+## ROS Entrypoint
 ADD agent_sources.sh /root/
 RUN chmod +x /root/agent_sources.sh
-
-WORKDIR /workspace/
 
 CMD ["/bin/bash"]
