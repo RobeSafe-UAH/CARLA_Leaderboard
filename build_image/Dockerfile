@@ -50,7 +50,6 @@ COPY .tmp ./team_code/
 
 ## Copy PythonAPI and setup global ENV variables
 RUN mkdir -p CARLA && cp -R ./team_code/build_image/PythonAPI ./CARLA/PythonAPI
-RUN ls -la /workspace/CARLA/PythonAPI/carla
 RUN cd /workspace/CARLA/PythonAPI/carla/dist && \
     mv carla-0.9.10-py3.7-linux-x86_64.egg carla-leaderboard-py3x.egg
 ENV CARLA_ROOT="/workspace/CARLA" SCENARIO_RUNNER_ROOT="/workspace/scenario_runner" \
@@ -74,8 +73,9 @@ RUN /bin/bash -c 'echo 'alias RUN_EVALUATION="cd /workspace && ./clear_run_evalu
 
 ## Setup ROS
 RUN mkdir -p /workspace/team_code/catkin_ws/src
-RUN /bin/bash -c 'cd /workspace/team_code/catkin_ws;\
-                 catkin_make -j8;'
+RUN /bin/bash -c 'source /opt/ros/noetic/setup.bash;\
+                  cd /workspace/team_code/catkin_ws;\
+                  catkin_make -j8;'
 
 ## ROS Entrypoint
 ADD agent_sources.sh /root/
