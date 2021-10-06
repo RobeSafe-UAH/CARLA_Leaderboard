@@ -1,0 +1,32 @@
+[submodule "catkin_ws/src/t4ac_mapping_layer"]
+	path = catkin_ws/src/t4ac_mapping_layer
+	url = git@github.com:RobeSafe-UAH/Techs4AgeCar-Mapping-Layer.git
+	branch = 2021_carla_challenge
+[submodule "catkin_ws/src/t4ac_unified_perception_layer"]
+	path = catkin_ws/src/t4ac_unified_perception_layer
+	url = git@github.com:RobeSafe-UAH/Techs4AgeCar-Unified-Perception-Layer.git
+	branch = 2021_carla_challenge
+[submodule "catkin_ws/src/t4ac_planning_layer"]
+	path = catkin_ws/src/t4ac_planning_layer
+	url = git@github.com:RobeSafe-UAH/Techs4AgeCar-Planning-Layer.git
+	branch = 2021_carla_challenge
+[submodule "catkin_ws/src/t4ac_localization_layer"]
+	path = catkin_ws/src/t4ac_localization_layer
+	url = git@github.com:RobeSafe-UAH/Techs4AgeCar-Localization-Layer.git
+	branch = 2021_carla_challenge
+[submodule "catkin_ws/src/t4ac_decision_making_layer"]
+	path = catkin_ws/src/t4ac_decision_making_layer
+	url = git@github.com:RobeSafe-UAH/t4ac_petrinets_ros.git
+	branch = 2021_carla_challenge
+[submodule "catkin_ws/src/t4ac_control_layer"]
+	path = catkin_ws/src/t4ac_control_layer
+	url = git@github.com:RobeSafe-UAH/t4ac_lqr_ros.git
+	branch = 2021_carla_challenge
+[submodule "catkin_ws/src/t4ac_msgs_ros"]
+	path = catkin_ws/src/t4ac_msgs_ros
+	url = git@github.com:RobeSafe-UAH/t4ac_msgs_ros.git
+	branch = master
+[submodule "catkin_ws/src/carla_msgs"]
+	path = catkin_ws/src/carla_msgs
+	url = git@github.com:carla-simulator/ros-carla-msgs.git
+	branch = master
