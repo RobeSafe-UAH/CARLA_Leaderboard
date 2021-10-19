@@ -15,6 +15,7 @@ from leaderboard.autoagents.autonomous_agent import AutonomousAgent, Track
 import os
 import time
 import sys
+import cv2
 
 # ROS imports
 
@@ -24,8 +25,9 @@ import roslaunch
 import rosgraph
 from nav_msgs.msg import Path, Odometry
 from geometry_msgs.msg import PoseStamped
-from sensor_msgs.point_cloud2 import create_cloud
+from sensor_msgs.msg import Image, CameraInfo
 from std_msgs.msg import Float64, Float32, Header
+from cv_bridge import CvBridge, CvBridgeError
 
 # Math and geometry imports
 
@@ -39,7 +41,7 @@ from scipy import interpolate
 # Custom functions imports
 
 from modules.geometric_functions import euler_to_quaternion, unit_vector
-from modules.bridge_functions import get_input_route_list
+from modules.bridge_functions import get_input_route_list, build_camera_info, cv2_to_imgmsg, image_rectification
 
 sys.path.insert(0,'/workspace/team_code/catkin_ws/src/t4ac_mapping_planning/t4ac_map_builder/src')
 from builder_classes import T4ac_Location
@@ -59,11 +61,25 @@ class RobesafeAgent(AutonomousAgent):
     def setup(self, path_to_conf_file):
         print("\033[1;31m"+"Start init configuration: "+'\033[0;m')
 
-        ## Layers variables
+        ### Layers variables
 
         self.time_sleep = 1
 
-        # Control
+        ## Perception
+
+        # Cameras
+
+        self.encoding = "bgra8"
+        self.bridge = CvBridge()
+        self.width = 1080
+        self.height = 540
+        self.fov = 60
+        self.f = self.width / (2.0 * math.tan(self.fov * math.pi / 360.0))
+        self.cx = self.width / 2.0
+        self.cy = self.height / 2.0
+        self.camera_position = np.array([0, 0]).reshape(-1,2) # With respect to the first camera, that represents the 0,0
+
+        ## Control
 
         self.Kp = 0.175
         self.Ki = 0.002
@@ -71,7 +87,7 @@ class RobesafeAgent(AutonomousAgent):
         self.steer_cmd = 0
         self.speed_cmd = 0
 
-        # Mapping-Planning
+        ## Mapping-Planning
 
         self.origin = utm.from_latlon(0, 0) # lat_origin, lon_origin
         self.offset_compass = -5/2*math.pi
@@ -88,8 +104,11 @@ class RobesafeAgent(AutonomousAgent):
 
         # Publishers
 
-        self.pub_waypoints_path = rospy.Publisher('/mapping_planning/waypoints', Path, queue_size=1000)
+        self.pub_waypoints_path = rospy.Publisher('/mapping_planning/waypoints', Path, queue_size=10)
         self.pub_gps_data = rospy.Publisher('/localization/gps_pose', Odometry, queue_size=10)
+        self.pub_raw_image = rospy.Publisher('/t4ac/perception/sensors/image_raw', Image, queue_size=100)
+        self.pub_rectified_image = rospy.Publisher('/t4ac/perception/sensors/image_rectified', Image, queue_size=100)
+        self.pub_camera_info = rospy.Publisher('/t4ac/perception/sensors/camera_info', CameraInfo, queue_size = 100)
 
         # Subscribers
 
@@ -112,8 +131,10 @@ class RobesafeAgent(AutonomousAgent):
 
         self.localization_launch = roslaunch.parent.ROSLaunchParent(self.uuid, ["/workspace/team_code/catkin_ws/src/sec_localization/launch/sec_localization.launch"])
         self.control_launch = roslaunch.parent.ROSLaunchParent(self.uuid, ["/workspace/team_code/catkin_ws/src/t4ac_control/t4ac_controller/launch/controller.launch"])
+        self.perception_launch = roslaunch.parent.ROSLaunchParent(self.uuid, ["/workspace/team_code/catkin_ws/src/t4ac_unified_perception_layer/launch/t4ac_unified_perception_layer.launch"])
         self.localization_launch.start()
         self.control_launch.start()
+        self.perception_launch.start()
 
         rospy.loginfo("started")
 
@@ -127,6 +148,7 @@ class RobesafeAgent(AutonomousAgent):
 
     def sensors(self):
         sensors =  [
+                    {'type': 'sensor.camera.rgb', 'x': 0.7, 'y': 0, 'z': 1.60, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,'width': self.width, 'height': self.height, 'fov': self.fov, 'id': 'Camera'},
                     {'type': 'sensor.other.gnss', 'x': -1.425, 'y': 0.0, 'z': 1.60, 'id': 'GPS'},
                     {'type': 'sensor.other.imu', 'x': -1.425, 'y': 0.0, 'z': 1.60, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'id': 'IMU'},
                     {'type': 'sensor.opendrive_map', 'reading_frequency': 1, 'id': 'OpenDRIVE'},
@@ -148,6 +170,7 @@ class RobesafeAgent(AutonomousAgent):
         actual_speed = (input_data['Speed'][1])['speed']
         gps = (input_data['GPS'][1])
         imu = (input_data['IMU'][1])
+        camera = (input_data['Camera'][1])
 
         if not self.trajectory_flag:
             print("Keys: ", input_data.keys())
@@ -160,11 +183,39 @@ class RobesafeAgent(AutonomousAgent):
 
         self.trajectory_callback(current_ros_time)
         self.gps_callback(gps, imu, current_ros_time)
+        self.cameras_callback(camera, current_ros_time)
         control = self.control_callback(actual_speed)
 
         return control 
 
     # Callbacks
+
+    def cameras_callback(self, camera, current_ros_time):
+        """
+        Return the information of the correspondin camera as a sensor_msgs.Image ROS message based on a string 
+        that contains the camera information
+        """
+
+        ros_image = cv2_to_imgmsg(camera, self.encoding)
+        ros_image.header.stamp = current_ros_time
+        ros_image.header.frame_id = "camera" # TODO: Get this by param
+        camera_info = build_camera_info(self.width, self.height, self.f, self.camera_position[0,0], self.camera_position[0,1], current_ros_time)
+        
+        self.pub_raw_image.publish(ros_image)
+        self.pub_camera_info.publish(camera_info)
+
+        # Rectify the image
+
+        cv_image = self.bridge.imgmsg_to_cv2(ros_image, desired_encoding='passthrough')
+        cwd = os.getcwd()
+        camera_parameters_path = '/workspace/team_code/modules/camera_parameters/'
+        roi_rectified_image = image_rectification(cv_image, camera_parameters_path)
+
+        ros_image_roi_rectified = cv2_to_imgmsg(roi_rectified_image, self.encoding)
+        ros_image_roi_rectified.header.stamp = current_ros_time
+        ros_image_roi_rectified.header.frame_id = "camera" # TODO: Get this by param
+
+        self.pub_rectified_image.publish(ros_image_roi_rectified)
 
     def trajectory_callback(self, current_ros_time):
         """
@@ -219,17 +270,14 @@ class RobesafeAgent(AutonomousAgent):
             gps_data.child_frame_id = "ros_center"
             gps_data.header.stamp = current_ros_time
             
-            lat = abs(gps[0]) 
-            lon = abs(gps[1])
-            
-            u = utm.from_latlon(lat, lon)
-            x = u[0] - self.origin[0]
-            y = u[1] - self.origin[1]  
+            lat = gps[0] 
+            lon = gps[1]
 
-            if (gps[0] > 0):
-                y = -y
-            if (gps[1] < 0):
-                x=-x
+            EARTH_RADIUS_EQUA = 6378137.0   # pylint: disable=invalid-name
+            scale = math.cos(lat * math.pi / 180.0)
+            x = scale * lon * math.pi * EARTH_RADIUS_EQUA / 180.0
+            # Negative y to correspond to carla documentations
+            y = - scale * EARTH_RADIUS_EQUA * math.log(math.tan((90.0 + lat) * math.pi / 360.0))
 
             roll = 0
             pitch = 0
@@ -319,5 +367,6 @@ class RobesafeAgent(AutonomousAgent):
 
         self.localization_launch.shutdown()
         self.control_launch.shutdown()
+        self.perception_launch.shutdown()
 
         pass
