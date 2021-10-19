@@ -22,11 +22,10 @@
 	path = catkin_ws/src/t4ac_control_layer
 	url = git@github.com:RobeSafe-UAH/t4ac_lqr_ros.git
 	branch = 2021_carla_challenge
-[submodule "catkin_ws/src/t4ac_msgs_ros"]
-	path = catkin_ws/src/t4ac_msgs_ros
-	url = git@github.com:RobeSafe-UAH/t4ac_msgs_ros.git
-	branch = master
 [submodule "catkin_ws/src/carla_msgs"]
 	path = catkin_ws/src/carla_msgs
 	url = git@github.com:carla-simulator/ros-carla-msgs.git
 	branch = master
+[submodule "catkin_ws/src/t4ac_config_layer"]
+	path = catkin_ws/src/t4ac_config_layer
+	url = git@github.com:RobeSafe-UAH/Techs4AgeCar-Config-Layer.git
