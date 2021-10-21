@@ -2,11 +2,14 @@ import numpy as np
 import cv2
 import sys
 import utm
-sys.path.insert(0,'/workspace/team_code/catkin_ws/src/t4ac_mapping_planning/t4ac_map_builder/src')
-from builder_classes import T4ac_Location
+
+sys.path.insert(0, '/workspace/team_code/catkin_ws/src/t4ac_planning_layer/')
+sys.path.insert(0, '/workspace/team_code/catkin_ws/src/t4ac_mapping_layer/')
+from t4ac_global_planner_ros.src.lane_waypoint_planner import LaneWaypointPlanner
+from t4ac_map_monitor_ros.src.modules import markers_module, monitor_classes
 from sensor_msgs.msg import PointCloud2, PointField, Image, CameraInfo
 
-def get_input_route_list(origin, global_plan):
+def old_get_input_route_list(origin, global_plan):
     """
     Return a T4ac_location points list (required by our path planner) based on a high-level route description 
     indicating the path to follow in order to reach the destination 
@@ -127,3 +130,40 @@ def image_rectification(distorted_image, camera_parameters_path='/workspace/team
     dst = cv2.undistort(distorted_image, K_distorted, D, None) # Undistort
     dst = dst[y:y+h, x:x+w]
     return dst
+
+def get_routeNodes(route):
+    """
+    Returns the route in Node3D format to visualize it on RVIZ
+    """
+
+    nodes = []
+
+    for waypoint in route:
+        node = monitor_classes.Node3D()
+        node.x = waypoint.transform.location.x
+        node.y = -waypoint.transform.location.y
+        node.z = 0
+        nodes.append(node)
+    return nodes
+
+def get_input_route_list(hdmap, input_route, distance_among_waypoints = 2):
+    print("hdmap: ", hdmap.keys())
+    LWP = LaneWaypointPlanner(hdmap['opendrive'],1)
+    route = LWP.calculate_waypoint_route_multiple(distance_among_waypoints, input_route, 1)
+    LWP.publish_waypoints(route)
+    routeNodes = get_routeNodes(route)
+
+    waypoints_marker = markers_module.get_nodes(
+        routeNodes, [0,0,1], "2", 8, 1.5, 1, 0)
+    return waypoints_marker
+
+
+
+
+
+
+
+
+
+    
+    

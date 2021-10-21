@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3.8
 # -*- coding: utf-8 -*-
 
@@ -8,14 +7,15 @@ Created on Tue Oct 5 14:20:29 2021
 """
 
 # CARLA imports
+
 import carla
 from leaderboard.autoagents.autonomous_agent import AutonomousAgent, Track
 
 # General use
+
 import os
 import time
 import sys
-import cv2
 
 # ROS imports
 
@@ -23,31 +23,23 @@ import rospy
 import rosnode
 import roslaunch
 import rosgraph
-from nav_msgs.msg import Path, Odometry
-from geometry_msgs.msg import PoseStamped
-from sensor_msgs.msg import Image, CameraInfo
-from std_msgs.msg import Float64, Float32, Header
+import visualization_msgs.msg
+from nav_msgs.msg import Odometry
+from sensor_msgs.msg import Image, CameraInfo, NavSatFix, NavSatStatus
+from t4ac_msgs.msg import CarControl
 from cv_bridge import CvBridge, CvBridgeError
 
 # Math and geometry imports
 
-import shapely.geometry as geom
 import math
 import numpy as np
-import matplotlib.pyplot as plt
-import utm
-from scipy import interpolate
 
 # Custom functions imports
 
-from modules.geometric_functions import euler_to_quaternion, unit_vector
-from modules.bridge_functions import get_input_route_list, build_camera_info, cv2_to_imgmsg, image_rectification
+from modules.geometric_functions import euler_to_quaternion
+from modules.bridge_functions import build_camera_info, cv2_to_imgmsg, image_rectification, get_input_route_list
 
-sys.path.insert(0,'/workspace/team_code/catkin_ws/src/t4ac_mapping_planning/t4ac_map_builder/src')
-from builder_classes import T4ac_Location
-from path_planner import PathPlanner
-
-# Auxiliar functions
+### Auxiliar functions
 
 def get_entry_point():
     """
@@ -61,13 +53,16 @@ class RobesafeAgent(AutonomousAgent):
     def setup(self, path_to_conf_file):
         print("\033[1;31m"+"Start init configuration: "+'\033[0;m')
 
-        ### Layers variables
+         ### Layers variables
 
         self.time_sleep = 1
 
         ## Perception
 
         # Cameras
+
+        # TODO: Build camera info using the ROI K matrix and build here, NOT IN THE CALLBACK, ADDING THE CAMERA_FRAME
+        # AS ARGUMENT
 
         self.encoding = "bgra8"
         self.bridge = CvBridge()
@@ -77,7 +72,7 @@ class RobesafeAgent(AutonomousAgent):
         self.f = self.width / (2.0 * math.tan(self.fov * math.pi / 360.0))
         self.cx = self.width / 2.0
         self.cy = self.height / 2.0
-        self.camera_position = np.array([0, 0]).reshape(-1,2) # With respect to the first camera, that represents the 0,0
+        self.camera_position_3Dcenter = np.array([0, 0]).reshape(-1,2) # With respect to the first camera, that represents the 0,0
 
         ## Control
 
@@ -87,14 +82,9 @@ class RobesafeAgent(AutonomousAgent):
         self.steer_cmd = 0
         self.speed_cmd = 0
 
-        ## Mapping-Planning
+        ## Mapping
 
-        self.origin = utm.from_latlon(0, 0) # lat_origin, lon_origin
-        self.offset_compass = -5/2*math.pi
-        self.trajectory_flag = False
-        self.flag_path_planner = False
-        self.hd_map = []
-        self.waypoints = []
+        self.trajectory_flag = True
 
         ### Track
 
@@ -104,16 +94,16 @@ class RobesafeAgent(AutonomousAgent):
 
         # Publishers
 
-        self.pub_waypoints_path = rospy.Publisher('/mapping_planning/waypoints', Path, queue_size=10)
-        self.pub_gps_data = rospy.Publisher('/localization/gps_pose', Odometry, queue_size=10)
+        self.pub_gnss_pose = rospy.Publisher('/t4ac/localization/gnss_pose', Odometry, queue_size=1)
+        self.pub_gnss_fix = rospy.Publisher('/t4ac/localization/fix', NavSatFix, queue_size=1)
         self.pub_raw_image = rospy.Publisher('/t4ac/perception/sensors/image_raw', Image, queue_size=100)
         self.pub_rectified_image = rospy.Publisher('/t4ac/perception/sensors/image_rectified', Image, queue_size=100)
         self.pub_camera_info = rospy.Publisher('/t4ac/perception/sensors/camera_info', CameraInfo, queue_size = 100)
-
+        self.pub_waypoints_visualizator = rospy.Publisher("/mapping_planning/debug/waypoints", visualization_msgs.msg.Marker, queue_size = 10)
+       
         # Subscribers
 
-        self.sub_steer = rospy.Subscriber('/control/steer', Float64, self.read_steer_callback)
-        self.sub_speed = rospy.Subscriber('/control/speed', Float64, self.read_speed_callback)
+        self.sub_cmd_vel = rospy.Subscriber('/t4ac/control/cmd_vel', CarControl, self.read_cmd_vel_callback)
 
         ## Launch the architecture
 
@@ -129,12 +119,10 @@ class RobesafeAgent(AutonomousAgent):
             launch = roslaunch.parent.ROSLaunchParent(self.uuid, roslaunch_files=[], is_core=True)
             launch.start()
 
-        self.localization_launch = roslaunch.parent.ROSLaunchParent(self.uuid, ["/workspace/team_code/catkin_ws/src/sec_localization/launch/sec_localization.launch"])
-        self.control_launch = roslaunch.parent.ROSLaunchParent(self.uuid, ["/workspace/team_code/catkin_ws/src/t4ac_control/t4ac_controller/launch/controller.launch"])
-        self.perception_launch = roslaunch.parent.ROSLaunchParent(self.uuid, ["/workspace/team_code/catkin_ws/src/t4ac_unified_perception_layer/launch/t4ac_unified_perception_layer.launch"])
-        self.localization_launch.start()
-        self.control_launch.start()
-        self.perception_launch.start()
+        # T4AC roslaunch
+        
+        self.t4ac_architecture_launch = roslaunch.parent.ROSLaunchParent(self.uuid, ["/workspace/team_code/catkin_ws/src/t4ac_config_layer/t4ac_utils_ros/launch/t4ac_config.launch"])
+        self.t4ac_architecture_launch.start()
 
         rospy.loginfo("started")
 
@@ -142,15 +130,40 @@ class RobesafeAgent(AutonomousAgent):
 
         rospy.init_node('robesafe_agent', anonymous=False)
 
+        ## Frames
+
+        self.map_frame = rospy.get_param('/t4ac/frames/map')
+        self.base_link_frame = rospy.get_param('/t4ac/frames/base_link')
+        self.camera_frame = rospy.get_param('/t4ac/frames/camera')
+
+        ## Sensors
+
+        # N.B. 
+        # 1. The origin of the sensors in CARLA is located in the geometric center of the vehicle z-filtered 
+        #    (that is, ground plane) -> A sensor placed at 0,0,0 position is in the middle and ground plane
+        # 2. roll,pitch and yaw from our TF file (e.g. t4ac_config.launch) is different to roll, pitch, yaw in sensors function
+        #    roll,pitch and yaw from our TF file represent the rotation of our device w.r.t. the origin of the vehicle in RADIANS
+        #    roll,pitch and yaw from sensor function represent the position of the axis, pointing the sensor towards x-direction
+
+        # e.g. You may have a sensor roll=0, pitch=90 and yaw=0, since you start with a LiDAR frame, x would point upwards, y
+        # leftwards and z backwards (that is, the ORIENTATION of the sensor). BUT, in the configuration file you specify the final position
+        # of your frame w.r.t. the origin (a camera would be z frontwards, x rightwards and y downwards)
+
+        self.camera_position = rospy.get_param('/t4ac/tf/base_link_to_camera_tf')
+        self.xcam, self.ycam, self.zcam = self.camera_position[:3]
+        self.gnss_position = rospy.get_param('/t4ac/tf/base_link_to_gnss_tf')
+        self.xgnss, self.ygnss, self.zgnss = self.gnss_position[:3]
+        
         print("\033[1;31m"+"End init configuration: "+'\033[0;m')
 
     # Specify your sensors
-
     def sensors(self):
         sensors =  [
-                    {'type': 'sensor.camera.rgb', 'x': 0.7, 'y': 0, 'z': 1.60, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,'width': self.width, 'height': self.height, 'fov': self.fov, 'id': 'Camera'},
-                    {'type': 'sensor.other.gnss', 'x': -1.425, 'y': 0.0, 'z': 1.60, 'id': 'GPS'},
-                    {'type': 'sensor.other.imu', 'x': -1.425, 'y': 0.0, 'z': 1.60, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'id': 'IMU'},
+                    {'type': 'sensor.camera.rgb', 'x': self.xcam, 'y': self.ycam, 'z': self.zcam, 
+                      'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,'width': 
+                      self.width, 'height': self.height, 'fov': self.fov, 'id': 'Camera'},
+                    {'type': 'sensor.other.gnss', 'x': self.xgnss, 'y': self.ygnss, 'z': self.zgnss, 'id': 'GNSS'},
+                    {'type': 'sensor.other.imu', 'x': self.xgnss, 'y': self.ygnss, 'z': self.zgnss, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'id': 'IMU'},
                     {'type': 'sensor.opendrive_map', 'reading_frequency': 1, 'id': 'OpenDRIVE'},
                     {'type': 'sensor.speedometer',  'reading_frequency': 20, 'id': 'Speed'},
                    ]
@@ -158,7 +171,6 @@ class RobesafeAgent(AutonomousAgent):
         return sensors
 
     # Run step function
-
     def run_step(self, input_data, timestamp):
         """
         Execute one step of navigation. Gather the sensor information
@@ -166,24 +178,24 @@ class RobesafeAgent(AutonomousAgent):
         current_ros_time = rospy.Time.now()
 
         # Get sensor data
-
         actual_speed = (input_data['Speed'][1])['speed']
-        gps = (input_data['GPS'][1])
+        gnss = (input_data['GNSS'][1])
         imu = (input_data['IMU'][1])
         camera = (input_data['Camera'][1])
 
-        if not self.trajectory_flag:
+        if self.trajectory_flag:
             print("Keys: ", input_data.keys())
-            self.hd_map = (input_data['OpenDRIVE'][1])
-            self.hd_map = self.hd_map['opendrive'].split('\n')
-            self.trajectory_flag = True
-            self.input_route_list = get_input_route_list(self.origin, self._global_plan)
+            hd_map = (input_data['OpenDRIVE'][1])
+            # hd_map = hd_map['opendrive'].split('\n')
+            self.trajectory_flag = False
+            print("Global plan: ", self._global_plan_world_coord)
+            waypoints_markers = get_input_route_list(hd_map, self._global_plan_world_coord)
 
+            self.pub_waypoints_visualizator.publish(waypoints_markers)
+        
         # Callbacks
-
-        self.trajectory_callback(current_ros_time)
-        self.gps_callback(gps, imu, current_ros_time)
-        self.cameras_callback(camera, current_ros_time)
+        self.gnss_imu_callback(gnss, imu, current_ros_time)
+        # self.cameras_callback(camera, current_ros_time)
         control = self.control_callback(actual_speed)
 
         return control 
@@ -199,10 +211,12 @@ class RobesafeAgent(AutonomousAgent):
         ros_image = cv2_to_imgmsg(camera, self.encoding)
         ros_image.header.stamp = current_ros_time
         ros_image.header.frame_id = "camera" # TODO: Get this by param
-        camera_info = build_camera_info(self.width, self.height, self.f, self.camera_position[0,0], self.camera_position[0,1], current_ros_time)
+        camera_info = build_camera_info(self.width, self.height, self.f, 
+                                        self.camera_position_3Dcenter[0,0], self.camera_position_3Dcenter[0,1], 
+                                        current_ros_time)
         
         self.pub_raw_image.publish(ros_image)
-        self.pub_camera_info.publish(camera_info)
+        # self.pub_camera_info.publish(camera_info)
 
         # Rectify the image
 
@@ -217,98 +231,79 @@ class RobesafeAgent(AutonomousAgent):
 
         self.pub_rectified_image.publish(ros_image_roi_rectified)
 
-    def trajectory_callback(self, current_ros_time):
-        """
-        This callback returns the calculated waypoints as nav_msgs.Path ROS message using our path_planner, spaced by a distance 
-        "distance_among_waypoints", based on a T4ac_location points list
-        """
-        while not rospy.is_shutdown():
-            waypoints_path = Path()
-            waypoints_path.header.frame_id = "/map"
-            waypoints_path.header.stamp = current_ros_time
-
-            distance_among_waypoints = 5
-
-            if not self.flag_path_planner:
-                path_planner = PathPlanner(self.hd_map)
-                self.waypoints = path_planner.get_route(self.input_route_list,distance_among_waypoints)
-                self.flag_path_planner = True
-
-            #x = []
-            #y = []
-
-            if self.waypoints is not None:
-                for wp in self.waypoints:
-                    pose = PoseStamped()
-                    pose.pose.position.x = wp.transform.location.x
-                    pose.pose.position.y = -wp.transform.location.y
-                    pose.pose.position.z = 0
-                    waypoints_path.poses.append(pose)
-
-                    #x.append(wp.transform.location.x)
-                    #y.append(wp.transform.location.y)
-            """
-            # Plot the calculated waypoints
-            plt.plot(x,y,'k--',label='Control polygon',marker='o',markerfacecolor='red')
-            plt.legend(loc='best')
-            plt.axis([min(x)-1, max(x)+1, min(y)-1, max(y)+1])
-            plt.title('Path planner waypoints')
-            plt.show()
-            """
-            self.pub_waypoints_path.publish(waypoints_path)
-            
-            return
-
-    def gps_callback(self, gps, imu, current_ros_time):
+    def gnss_imu_callback(self, gnss, imu, current_ros_time):
         """
         Return UTM position (x,y,z) and orientation of the ego-vehicle as a nav_msgs.Odometry ROS message based on the
-        gps information (WGS84) and imu (to compute the orientation)
+        gnss information (WGS84) and imu (to compute the orientation)
+            GNSS    ->  latitude =  gnss[0] ; longitude = gnss[1] ; altitude = gnss[2]
+            IMU     ->  accelerometer.x = imu[0] ; accelerometer.y = imu[1] ; accelerometer.z = imu[2] ; 
+                        gyroscope.x = imu[3]  ;  gyroscope.y = imu[4]  ;  gyroscope.z = imu[5]  ;  compas = imu[6]
         """
-        while not rospy.is_shutdown():
-            gps_data = Odometry()
-            gps_data.header.frame_id = "map"
-            gps_data.child_frame_id = "ros_center"
-            gps_data.header.stamp = current_ros_time
-            
-            lat = gps[0] 
-            lon = gps[1]
+        
+        # Read and publish GNSS data
+        gnss_msg = NavSatFix()
+        gnss_msg.header.stamp = current_ros_time
+        gnss_msg.header.frame_id = 'gnss'
+        gnss_msg.latitude = gnss[0]
+        gnss_msg.longitude = gnss[1]
+        gnss_msg.altitude = gnss[2]
+        gnss_msg.status.status = NavSatStatus.STATUS_SBAS_FIX
+        gnss_msg.status.service = NavSatStatus.SERVICE_GPS | NavSatStatus.SERVICE_GLONASS | NavSatStatus.SERVICE_COMPASS | NavSatStatus.SERVICE_GALILEO
+        self.pub_gnss_fix.publish(gnss_msg)
 
-            EARTH_RADIUS_EQUA = 6378137.0   # pylint: disable=invalid-name
-            scale = math.cos(lat * math.pi / 180.0)
-            x = scale * lon * math.pi * EARTH_RADIUS_EQUA / 180.0
-            # Negative y to correspond to carla documentations
-            y = - scale * EARTH_RADIUS_EQUA * math.log(math.tan((90.0 + lat) * math.pi / 360.0))
+        gnss_pose_msg = Odometry()
+        gnss_pose_msg.header.frame_id = self.map_frame
+        gnss_pose_msg.child_frame_id = self.base_link_frame
+        gnss_pose_msg.header.stamp = current_ros_time
 
-            roll = 0
-            pitch = 0
-            yaw = imu[6] + self.offset_compass
+        # Convert Geographic (latitude, longitude) to UTM (x,y) coordinates
+        gnss_msg.latitude = -gnss_msg.latitude
+        EARTH_RADIUS_EQUA = 6378137.0   # pylint: disable=invalid-name
+        scale = math.cos(gnss_msg.latitude * math.pi / 180.0)
+        x = scale * gnss_msg.longitude * math.pi * EARTH_RADIUS_EQUA / 180.0 
+        # Negative y to correspond to carla documentations
+        y = - scale * EARTH_RADIUS_EQUA * math.log(math.tan((90.0 + gnss_msg.latitude) * math.pi / 360.0))  
+        #################################################################################################
+        #####  It doesn't work with CARLA, they use an approximation to perform the conversion #######
+        # import utm
+        # ....
+        # gnss_msg.latitude = -gnss_msg.latitude # Since in CARLA Towns the y-reference is the opposite
+        # u = utm.from_latlon(gnss_msg.latitude, gnss_msg.longitude)
+        # x = u[0] - self.origin[0]
+        # y = u[1] - self.origin[1]
+        #################################################################################################
 
-            if (yaw < -math.pi):
-                yaw = 2*math.pi + yaw
+        # Read IMU data -> Yaw angle is used to give orientation to the gnss pose 
+        roll = 0
+        pitch = 0
+        compass = imu[6]
 
-            [qx, qy, qz, qw] = euler_to_quaternion(roll, pitch, yaw)
+        if (0 < compass < math.radians(180)):
+            yaw = -compass + math.radians(90)
+        else:
+            yaw = -compass + math.radians(450)
+                
+        [qx, qy, qz, qw] = euler_to_quaternion(roll, pitch, yaw)
 
-            gps_data.pose.pose.position.x = x
-            gps_data.pose.pose.position.y = y
-            gps_data.pose.pose.position.z = 0
+        gnss_pose_msg.pose.pose.position.x = x
+        gnss_pose_msg.pose.pose.position.y = y 
+        gnss_pose_msg.pose.pose.position.z = 0
 
-            gps_data.pose.pose.orientation.x = qx
-            gps_data.pose.pose.orientation.y = qy
-            gps_data.pose.pose.orientation.z = qz
-            gps_data.pose.pose.orientation.w = qw
+        gnss_pose_msg.pose.pose.orientation.x = qx
+        gnss_pose_msg.pose.pose.orientation.y = qy
+        gnss_pose_msg.pose.pose.orientation.z = qz
+        gnss_pose_msg.pose.pose.orientation.w = qw
 
-            error_gps = 1.5
-            gps_data.pose.covariance = np.diag([error_gps, error_gps, error_gps, 0, 0, 0]).ravel()
+        gnns_error = 1.5
+        gnss_pose_msg.pose.covariance = np.diag([gnns_error, gnns_error, gnns_error, 0, 0, 0]).ravel()
 
-            self.pub_gps_data.publish(gps_data)
-
-            return
-            
+        self.pub_gnss_pose.publish(gnss_pose_msg)
+ 
     def control_callback(self, actual_speed):
         """
         Return the current state of the vehicle regarding the control layer
         """
-        error_speed = self.speed_cmd - actual_speed  # distance away from setpoint
+        error_speed = self.speed_cmd - actual_speed  # distance away from setpoint [m/s]
         self.error_sum += (error_speed*self.Ki)
 
         if (self.error_sum > 0.5):
@@ -335,7 +330,7 @@ class RobesafeAgent(AutonomousAgent):
         # Return control
 
         control = carla.VehicleControl()
-        control.steer = self.steer_cmd
+        control.steer = - self.steer_cmd
         control.throttle = throttle
         control.brake = brake
         control.hand_brake = False
@@ -344,17 +339,12 @@ class RobesafeAgent(AutonomousAgent):
 
         return control
 
-    def read_steer_callback(self, steer):
+    def read_cmd_vel_callback(self, cmd_vel):
         """
-        Return the state of the steering wheel of the ego-vehicle
+        Return the current cmd_vel command
         """
-        self.steer_cmd = steer.data
-
-    def read_speed_callback(self, speed):
-        """
-        Return the current speed of the ego-vehicle
-        """
-        self.speed_cmd = speed.data
+        self.speed_cmd = cmd_vel.velocity
+        self.steer_cmd = cmd_vel.steer
 
     # Destroy the agent
 
@@ -365,8 +355,6 @@ class RobesafeAgent(AutonomousAgent):
         :return:
         """
 
-        self.localization_launch.shutdown()
-        self.control_launch.shutdown()
-        self.perception_launch.shutdown()
+        self.t4ac_architecture_launch.shutdown()
 
         pass
