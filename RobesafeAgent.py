@@ -38,6 +38,7 @@ import numpy as np
 
 from modules.geometric_functions import euler_to_quaternion
 from modules.bridge_functions import build_camera_info, cv2_to_imgmsg, image_rectification, get_input_route_list
+from t4ac_global_planner_ros.src.lane_waypoint_planner import LaneWaypointPlanner
 
 ### Auxiliar functions
 
@@ -123,12 +124,21 @@ class RobesafeAgent(AutonomousAgent):
         
         self.t4ac_architecture_launch = roslaunch.parent.ROSLaunchParent(self.uuid, ["/workspace/team_code/catkin_ws/src/t4ac_config_layer/t4ac_utils_ros/launch/t4ac_config.launch"])
         self.t4ac_architecture_launch.start()
+        # self.t4ac_config_launch = roslaunch.parent.ROSLaunchParent(self.uuid, ["/workspace/team_code/catkin_ws/src/t4ac_config_layer/t4ac_utils_ros/launch/t4ac_config.launch"])
+        # self.t4ac_control_launch = roslaunch.parent.ROSLaunchParent(self.uuid, ["/workspace/team_code/catkin_ws/src/t4ac_control_layer/launch/t4ac_lqr_ros.launch"])
+        # self.t4ac_localization_launch = roslaunch.parent.ROSLaunchParent(self.uuid, ["/workspace/team_code/catkin_ws/src/t4ac_localization_layer/launch/t4ac_localization.launch"])
+        # self.t4ac_decision_making_launch = roslaunch.parent.ROSLaunchParent(self.uuid, ["/workspace/team_code/catkin_ws/src/t4ac_decision_making_layer/launch/t4ac_petrinets_ros.launch"])
+        
+        # self.t4ac_config_launch.start()
+        # self.t4ac_control_launch.start()
+        # self.t4ac_localization_launch.start()
+        # self.t4ac_decision_making_launch.start()
 
         rospy.loginfo("started")
 
         ## Init the node
 
-        rospy.init_node('robesafe_agent', anonymous=False)
+        rospy.init_node('robesafe_agent', anonymous=True)
 
         ## Frames
 
@@ -183,15 +193,24 @@ class RobesafeAgent(AutonomousAgent):
         imu = (input_data['IMU'][1])
         camera = (input_data['Camera'][1])
 
+
         if self.trajectory_flag:
             print("Keys: ", input_data.keys())
             hd_map = (input_data['OpenDRIVE'][1])
             # hd_map = hd_map['opendrive'].split('\n')
+            distance_among_waypoints = 2
+            self.LWP = LaneWaypointPlanner(hd_map['opendrive'],1)
+            self.route = self.LWP.calculate_waypoint_route_multiple(distance_among_waypoints, self._global_plan_world_coord, 1)
             self.trajectory_flag = False
-            print("Global plan: ", self._global_plan_world_coord)
-            waypoints_markers = get_input_route_list(hd_map, self._global_plan_world_coord)
 
-            self.pub_waypoints_visualizator.publish(waypoints_markers)
+        # Publish until control has started   
+        if actual_speed < 0.2:
+            self.LWP.publish_waypoints(self.route)
+
+        # # Publish markers
+        # print("Global plan: ", self._global_plan_world_coord)
+        # waypoints_markers = get_input_route_list(hd_map, self._global_plan_world_coord)
+        # self.pub_waypoints_visualizator.publish(waypoints_markers)
         
         # Callbacks
         self.gnss_imu_callback(gnss, imu, current_ros_time)
@@ -356,5 +375,9 @@ class RobesafeAgent(AutonomousAgent):
         """
 
         self.t4ac_architecture_launch.shutdown()
+        # self.t4ac_config_launch.shutdown()
+        # self.t4ac_control_launch.shutdown()
+        # self.t4ac_localization_launch.shutdown()
+        # self.t4ac_decision_making_launch.shutdown()
 
         pass
