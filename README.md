@@ -9,8 +9,11 @@ Results presented at ML4AD workshop: December 13th, 2021 \
 
 **How to clone this repository?**
 ```
-cd /workspace (in the docker image)
+(In your host)
+cd ~
 git clone --recursive -b 2021_carla_challenge git@github.com:RobeSafe-UAH/CARLA_Leaderboard.git team_code 
+cd team_code/build_image 
+./make_docker.sh carla_challenge_2021:latest ssh_user (e.g. ./make_docker.sh carla_challenge_2021:latest carlos.gomez) 
 ```
 
 **How to add a submodule?**
