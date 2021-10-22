@@ -119,6 +119,40 @@ def build_camera_info(width, height, f, x, y, current_ros_time):
 
     return camera_info 
 
+def build_camera_info_from_file(frame, parameters_route, camera_position, current_ros_time):
+    """
+    Private function to compute camera info
+    camera info doesn't change over time
+    """
+
+    x = camera_position[0]
+    y = camera_position[1]
+
+    K = np.loadtxt(parameters_route+'K.txt')
+    fx = K[0,0]
+    fy = K[1,1]
+    cx = K[0,2]
+    cy = K[1,2]
+
+    roi = np.loadtxt(parameters_route+'roi.txt')
+    xtl,ytl,width,height = roi
+    width = int(width)
+    height = int(height)
+
+    camera_info = CameraInfo()
+    camera_info.header.stamp = current_ros_time
+    camera_info.header.frame_id = frame
+    camera_info.width = width
+    camera_info.height = height
+    camera_info.distortion_model = 'plumb_bob'
+
+    camera_info.K = [fx, 0, cx, 0, fy, cy, 0, 0, 1]
+    camera_info.D = [0, 0, 0, 0, 0]
+    camera_info.R = [1.0, 0, 0, 0, 1.0, 0, 0, 0, 1.0]
+    camera_info.P = [fx, 0, cx, x, 0, fy, cy, y, 0, 0, 1.0, 0]
+
+    return camera_info
+
 def image_rectification(distorted_image, camera_parameters_path='/workspace/team_code/modules/camera_parameters/'):
     """
     """

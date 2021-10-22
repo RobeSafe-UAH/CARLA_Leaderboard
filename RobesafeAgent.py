@@ -37,7 +37,7 @@ import numpy as np
 # Custom functions imports
 
 from modules.geometric_functions import euler_to_quaternion
-from modules.bridge_functions import build_camera_info, cv2_to_imgmsg, image_rectification, get_input_route_list
+from modules.bridge_functions import build_camera_info, build_camera_info_from_file, cv2_to_imgmsg, image_rectification, get_input_route_list
 from t4ac_global_planner_ros.src.lane_waypoint_planner import LaneWaypointPlanner
 
 ### Auxiliar functions
@@ -97,9 +97,10 @@ class RobesafeAgent(AutonomousAgent):
 
         self.pub_gnss_pose = rospy.Publisher('/t4ac/localization/gnss_pose', Odometry, queue_size=1)
         self.pub_gnss_fix = rospy.Publisher('/t4ac/localization/fix', NavSatFix, queue_size=1)
-        self.pub_raw_image = rospy.Publisher('/t4ac/perception/sensors/image_raw', Image, queue_size=100)
-        self.pub_rectified_image = rospy.Publisher('/t4ac/perception/sensors/image_rectified', Image, queue_size=100)
-        self.pub_camera_info = rospy.Publisher('/t4ac/perception/sensors/camera_info', CameraInfo, queue_size = 100)
+        self.pub_raw_image = rospy.Publisher('/t4ac/perception/sensors/raw_image', Image, queue_size=100)
+        self.pub_raw_image_info = rospy.Publisher('/t4ac/perception/sensors/raw_image_info', CameraInfo, queue_size = 100)
+        self.pub_rectified_image = rospy.Publisher('/t4ac/perception/sensors/rectified_image', Image, queue_size=100)
+        self.pub_rectified_image_info = rospy.Publisher('/t4ac/perception/sensors/rectified_image_info', CameraInfo, queue_size = 100)
         self.pub_waypoints_visualizator = rospy.Publisher("/mapping_planning/debug/waypoints", visualization_msgs.msg.Marker, queue_size = 10)
        
         # Subscribers
@@ -214,41 +215,44 @@ class RobesafeAgent(AutonomousAgent):
         
         # Callbacks
         self.gnss_imu_callback(gnss, imu, current_ros_time)
-        # self.cameras_callback(camera, current_ros_time)
+        self.cameras_callback(camera, current_ros_time)
         control = self.control_callback(actual_speed)
 
         return control 
 
     # Callbacks
 
-    def cameras_callback(self, camera, current_ros_time):
+    def cameras_callback(self, raw_image, current_ros_time):
         """
         Return the information of the correspondin camera as a sensor_msgs.Image ROS message based on a string 
         that contains the camera information
         """
 
-        ros_image = cv2_to_imgmsg(camera, self.encoding)
-        ros_image.header.stamp = current_ros_time
-        ros_image.header.frame_id = "camera" # TODO: Get this by param
-        camera_info = build_camera_info(self.width, self.height, self.f, 
-                                        self.camera_position_3Dcenter[0,0], self.camera_position_3Dcenter[0,1], 
-                                        current_ros_time)
+        raw_image = cv2_to_imgmsg(raw_image, self.encoding)
+        raw_image.header.stamp = current_ros_time
+        raw_image.header.frame_id = self.camera_frame
+        # raw_image_info = build_camera_info(self.width, self.height, self.f, 
+        #                                    self.camera_position_3Dcenter[0,0], self.camera_position_3Dcenter[0,1], 
+        #                                    current_ros_time)
         
-        self.pub_raw_image.publish(ros_image)
-        # self.pub_camera_info.publish(camera_info)
+        self.pub_raw_image.publish(raw_image)
+        # self.pub_raw_image_info.publish(raw_image_info)
 
         # Rectify the image
 
-        cv_image = self.bridge.imgmsg_to_cv2(ros_image, desired_encoding='passthrough')
+        cv_image = self.bridge.imgmsg_to_cv2(raw_image, desired_encoding='passthrough')
         cwd = os.getcwd()
         camera_parameters_path = '/workspace/team_code/modules/camera_parameters/'
         roi_rectified_image = image_rectification(cv_image, camera_parameters_path)
 
-        ros_image_roi_rectified = cv2_to_imgmsg(roi_rectified_image, self.encoding)
-        ros_image_roi_rectified.header.stamp = current_ros_time
-        ros_image_roi_rectified.header.frame_id = "camera" # TODO: Get this by param
+        roi_rectified_image = cv2_to_imgmsg(roi_rectified_image, self.encoding)
+        roi_rectified_image.header.stamp = current_ros_time
+        roi_rectified_image.header.frame_id = self.camera_frame # TODO: Get this by param
+        rectified_image_info = build_camera_info_from_file(self.camera_frame, camera_parameters_path, 
+                                                           self.camera_position_3Dcenter[0], current_ros_time)
 
-        self.pub_rectified_image.publish(ros_image_roi_rectified)
+        self.pub_rectified_image.publish(roi_rectified_image)
+        self.pub_rectified_image_info.publish(rectified_image_info)
 
     def gnss_imu_callback(self, gnss, imu, current_ros_time):
         """
