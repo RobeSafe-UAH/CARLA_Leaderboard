@@ -194,7 +194,6 @@ class RobesafeAgent(AutonomousAgent):
         imu = (input_data['IMU'][1])
         camera = (input_data['Camera'][1])
 
-
         if self.trajectory_flag:
             print("Keys: ", input_data.keys())
             hd_map = (input_data['OpenDRIVE'][1])
@@ -247,10 +246,12 @@ class RobesafeAgent(AutonomousAgent):
 
         roi_rectified_image = cv2_to_imgmsg(roi_rectified_image, self.encoding)
         roi_rectified_image.header.stamp = current_ros_time
-        roi_rectified_image.header.frame_id = self.camera_frame # TODO: Get this by param
-        rectified_image_info = build_camera_info_from_file(self.camera_frame, camera_parameters_path, 
-                                                           self.camera_position_3Dcenter[0], current_ros_time)
-
+        roi_rectified_image.header.frame_id = self.camera_frame 
+        # rectified_image_info = build_camera_info_from_file(self.camera_frame, camera_parameters_path, 
+        #                                                    self.camera_position_3Dcenter[0], current_ros_time)
+        rectified_image_info = build_camera_info(roi_rectified_image.width, roi_rectified_image.height, self.f, 
+                                                 self.camera_position_3Dcenter[0,0], self.camera_position_3Dcenter[0,1], 
+                                                 current_ros_time)
         self.pub_rectified_image.publish(roi_rectified_image)
         self.pub_rectified_image_info.publish(rectified_image_info)
 
