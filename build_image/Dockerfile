@@ -28,6 +28,7 @@ RUN apt-get update && DEBIAN_FRONTEND="noninteractive" apt-get install -y --no-i
 	     libtiff5 \
          libpng-dev \
          lsb-core \
+         libgeographic-dev \
          python3-dev \
          python3-setuptools \
          python3-pip && \ 
