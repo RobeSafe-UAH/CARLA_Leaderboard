@@ -318,7 +318,7 @@ class RobesafeAgent(AutonomousAgent):
         gnss_pose_msg.pose.pose.orientation.z = qz
         gnss_pose_msg.pose.pose.orientation.w = qw
 
-        gnns_error = 1.5
+        gnns_error = 10.5
         gnss_pose_msg.pose.covariance = np.diag([gnns_error, gnns_error, gnns_error, 0, 0, 0]).ravel()
 
         self.pub_gnss_pose.publish(gnss_pose_msg)

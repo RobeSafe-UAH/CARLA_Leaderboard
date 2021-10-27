@@ -22,6 +22,7 @@ RUN apt-get update && DEBIAN_FRONTEND="noninteractive" apt-get install -y --no-i
          vim \
          tree \
          htop \
+	     libgeographic-dev \ 
          ca-certificates \
          libjpeg-dev \
 	     libpng16-16 \
