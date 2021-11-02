@@ -43,23 +43,23 @@ def old_get_input_route_list(origin, global_plan):
 
     return input_route_list
 
-def lidar_string_to_array(lidar,whole_cloud=None):
-    """
-    Return the LiDAR pointcloud in numpy.array format based on a string. Every time, half (in this case) of the cloud
-    is computed due to the LiDAR frequency, so if whole_cloud == True, we concatenate two consecutive pointclouds
-    """
-    lidar_data = np.fromstring(lidar, dtype=np.float32)
-    lidar_data = np.reshape(lidar_data, (int(lidar_data.shape[0] / 4), 4))
+# def lidar_string_to_array(lidar,whole_cloud=None):
+#     """
+#     Return the LiDAR pointcloud in numpy.array format based on a string. Every time, half (in this case) of the cloud
+#     is computed due to the LiDAR frequency, so if whole_cloud == True, we concatenate two consecutive pointclouds
+#     """
+#     lidar_data = np.fromstring(lidar, dtype=np.float32)
+#     lidar_data = np.reshape(lidar_data, (int(lidar_data.shape[0] / 4), 4))
 
-    # we take the oposite of y axis (since in CARLA a LiDAR point is 
-    # expressed in left-handed coordinate system, and ROS needs right-handed)
+#     # we take the oposite of y axis (since in CARLA a LiDAR point is 
+#     # expressed in left-handed coordinate system, and ROS needs right-handed)
 
-    lidar_data[:, 1] *= -1
+#     lidar_data[:, 1] *= -1
 
-    if whole_cloud:
-        lidar_data = np.concatenate((self.half_cloud,lidar_data),axis=0)
+#     if whole_cloud:
+#         lidar_data = np.concatenate((self.half_cloud,lidar_data),axis=0)
 
-    return lidar_data
+#     return lidar_data
 
 def cv2_to_imgmsg(cvim, encoding = "passthrough"):
     """
@@ -119,20 +119,23 @@ def build_camera_info(width, height, f, x, y, current_ros_time):
 
     return camera_info 
 
-def build_camera_info_from_file(frame, parameters_route, camera_position, current_ros_time):
+def build_camera_info_from_file(frame, parameters_route, x_pos, y_pos, current_ros_time):
     """
     Private function to compute camera info
     camera info doesn't change over time
     """
 
-    x = camera_position[0]
-    y = camera_position[1]
+    x = x_pos
+    y = y_pos
 
     K = np.loadtxt(parameters_route+'K.txt')
     fx = K[0,0]
     fy = K[1,1]
     cx = K[0,2]
     cy = K[1,2]
+
+    # print("x, y: ", x, y)
+    # print("fx, fy, cx, cy: ", fx, fy, cx, cy)
 
     roi = np.loadtxt(parameters_route+'roi.txt')
     xtl,ytl,width,height = roi

@@ -16,6 +16,7 @@ from leaderboard.autoagents.autonomous_agent import AutonomousAgent, Track
 import os
 import time
 import sys
+import cv2
 
 # ROS imports
 
@@ -25,9 +26,11 @@ import roslaunch
 import rosgraph
 import visualization_msgs.msg
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import Image, CameraInfo, NavSatFix, NavSatStatus
+from sensor_msgs.point_cloud2 import create_cloud
+from sensor_msgs.msg import Image, CameraInfo, NavSatFix, NavSatStatus, PointCloud2, PointField
 from t4ac_msgs.msg import CarControl
 from cv_bridge import CvBridge, CvBridgeError
+from std_msgs.msg import Float64, Float32, Header
 
 # Math and geometry imports
 
@@ -65,15 +68,23 @@ class RobesafeAgent(AutonomousAgent):
         # TODO: Build camera info using the ROI K matrix and build here, NOT IN THE CALLBACK, ADDING THE CAMERA_FRAME
         # AS ARGUMENT
 
+        self.calibrate_camera = False
         self.encoding = "bgra8"
         self.bridge = CvBridge()
-        self.width = 1080
-        self.height = 540
-        self.fov = 60
+        self.width = 1920 # 2060, 1080
+        self.height = 1080 # 1080, 540
+        self.fov = 80 # 80, 60
+        self.camera_parameters_path = '/workspace/team_code/modules/camera_parameters/'
+        self.config = 'camera_parameters_'+str(self.width)+'_'+str(self.height)+'_'+str(self.fov)+'/' 
         self.f = self.width / (2.0 * math.tan(self.fov * math.pi / 360.0))
         self.cx = self.width / 2.0
         self.cy = self.height / 2.0
         self.camera_position_3Dcenter = np.array([0, 0]).reshape(-1,2) # With respect to the first camera, that represents the 0,0
+
+        # LiDAR
+
+        self.half_cloud = []
+        self.lidar_count = 0
 
         ## Control
 
@@ -101,6 +112,7 @@ class RobesafeAgent(AutonomousAgent):
         self.pub_raw_image_info = rospy.Publisher('/t4ac/perception/sensors/raw_image_info', CameraInfo, queue_size = 100)
         self.pub_rectified_image = rospy.Publisher('/t4ac/perception/sensors/rectified_image', Image, queue_size=100)
         self.pub_rectified_image_info = rospy.Publisher('/t4ac/perception/sensors/rectified_image_info', CameraInfo, queue_size = 100)
+        self.pub_lidar_pointcloud = rospy.Publisher('/t4ac/perception/sensors/lidar', PointCloud2, queue_size=10)
         self.pub_waypoints_visualizator = rospy.Publisher("/mapping_planning/debug/waypoints", visualization_msgs.msg.Marker, queue_size = 10)
        
         # Subscribers
@@ -125,17 +137,8 @@ class RobesafeAgent(AutonomousAgent):
         
         self.t4ac_architecture_launch = roslaunch.parent.ROSLaunchParent(self.uuid, ["/workspace/team_code/catkin_ws/src/t4ac_config_layer/t4ac_utils_ros/launch/t4ac_config.launch"])
         self.t4ac_architecture_launch.start()
-        # self.t4ac_config_launch = roslaunch.parent.ROSLaunchParent(self.uuid, ["/workspace/team_code/catkin_ws/src/t4ac_config_layer/t4ac_utils_ros/launch/t4ac_config.launch"])
-        # self.t4ac_control_launch = roslaunch.parent.ROSLaunchParent(self.uuid, ["/workspace/team_code/catkin_ws/src/t4ac_control_layer/launch/t4ac_lqr_ros.launch"])
-        # self.t4ac_localization_launch = roslaunch.parent.ROSLaunchParent(self.uuid, ["/workspace/team_code/catkin_ws/src/t4ac_localization_layer/launch/t4ac_localization.launch"])
-        # self.t4ac_decision_making_launch = roslaunch.parent.ROSLaunchParent(self.uuid, ["/workspace/team_code/catkin_ws/src/t4ac_decision_making_layer/launch/t4ac_petrinets_ros.launch"])
-        
-        # self.t4ac_config_launch.start()
-        # self.t4ac_control_launch.start()
-        # self.t4ac_localization_launch.start()
-        # self.t4ac_decision_making_launch.start()
 
-        rospy.loginfo("started")
+        rospy.loginfo("Techs4AgeCar architecture started")
 
         ## Init the node
 
@@ -146,6 +149,7 @@ class RobesafeAgent(AutonomousAgent):
         self.map_frame = rospy.get_param('/t4ac/frames/map')
         self.base_link_frame = rospy.get_param('/t4ac/frames/base_link')
         self.camera_frame = rospy.get_param('/t4ac/frames/camera')
+        self.lidar_frame = rospy.get_param('/t4ac/frames/lidar')
 
         ## Sensors
 
@@ -173,6 +177,7 @@ class RobesafeAgent(AutonomousAgent):
                     {'type': 'sensor.camera.rgb', 'x': self.xcam, 'y': self.ycam, 'z': self.zcam, 
                       'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,'width': 
                       self.width, 'height': self.height, 'fov': self.fov, 'id': 'Camera'},
+                    {'type': 'sensor.lidar.ray_cast', 'x': 0.0, 'y': 0.0, 'z': 1.8, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'id': 'LiDAR'},
                     {'type': 'sensor.other.gnss', 'x': self.xgnss, 'y': self.ygnss, 'z': self.zgnss, 'id': 'GNSS'},
                     {'type': 'sensor.other.imu', 'x': self.xgnss, 'y': self.ygnss, 'z': self.zgnss, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'id': 'IMU'},
                     {'type': 'sensor.opendrive_map', 'reading_frequency': 1, 'id': 'OpenDRIVE'},
@@ -193,6 +198,7 @@ class RobesafeAgent(AutonomousAgent):
         gnss = (input_data['GNSS'][1])
         imu = (input_data['IMU'][1])
         camera = (input_data['Camera'][1])
+        lidar = (input_data['LiDAR'][1])
 
         if self.trajectory_flag:
             print("Keys: ", input_data.keys())
@@ -206,20 +212,64 @@ class RobesafeAgent(AutonomousAgent):
         # Publish until control has started   
         if actual_speed < 0.2:
             self.LWP.publish_waypoints(self.route)
-
-        # # Publish markers
-        # print("Global plan: ", self._global_plan_world_coord)
-        # waypoints_markers = get_input_route_list(hd_map, self._global_plan_world_coord)
-        # self.pub_waypoints_visualizator.publish(waypoints_markers)
         
         # Callbacks
         self.gnss_imu_callback(gnss, imu, current_ros_time)
         self.cameras_callback(camera, current_ros_time)
+        self.lidar_callback(lidar, current_ros_time) 
         control = self.control_callback(actual_speed)
 
         return control 
 
     # Callbacks
+
+    def lidar_string_to_array(self,lidar,whole_cloud=None):
+        """
+        Return the LiDAR pointcloud in numpy.array format based on a string. Every time, half (in this case) of the cloud
+        is computed due to the LiDAR frequency, so if whole_cloud == True, we concatenate two consecutive pointclouds
+        """
+        lidar_data = np.fromstring(lidar, dtype=np.float32)
+        lidar_data = np.reshape(lidar_data, (int(lidar_data.shape[0] / 4), 4))
+
+        # we take the oposite of y axis (since in CARLA a LiDAR point is 
+        # expressed in left-handed coordinate system, and ROS needs right-handed)
+
+        lidar_data[:, 1] *= -1
+
+        if whole_cloud:
+            lidar_data = np.concatenate((self.half_cloud,lidar_data),axis=0)
+
+        return lidar_data
+
+    def lidar_callback(self, lidar, current_ros_time):
+        """
+        Return the LiDAR pointcloud as a sensor_msgs.PointCloud2 ROS message based on a string that contains
+        the LiDAR information
+        """
+        while not rospy.is_shutdown():
+            self.lidar_count += 1
+            if (self.lidar_count % 2 == 0):
+                self.lidar_count = 0
+
+                header = Header()
+                header.stamp = current_ros_time
+                header.frame_id = self.lidar_frame
+
+                whole_cloud = True
+
+                lidar_data = self.lidar_string_to_array(lidar,whole_cloud)
+
+                fields = [PointField('x', 0, PointField.FLOAT32, 1),
+                        PointField('y', 4, PointField.FLOAT32, 1),
+                        PointField('z', 8, PointField.FLOAT32, 1),
+                        PointField('intensity', 12, PointField.FLOAT32, 1),
+                        ]
+                point_cloud_msg = create_cloud(header, fields, lidar_data)
+                self.pub_lidar_pointcloud.publish(point_cloud_msg)
+            else:
+                self.half_cloud = self.lidar_string_to_array(lidar)
+
+            return
 
     def cameras_callback(self, raw_image, current_ros_time):
         """
@@ -240,15 +290,18 @@ class RobesafeAgent(AutonomousAgent):
         # Rectify the image
 
         cv_image = self.bridge.imgmsg_to_cv2(raw_image, desired_encoding='passthrough')
-        cwd = os.getcwd()
-        camera_parameters_path = '/workspace/team_code/modules/camera_parameters/'
-        roi_rectified_image = image_rectification(cv_image, camera_parameters_path)
+
+        if self.calibrate_camera:
+            cv2.imwrite("/workspace/team_code/modules/camera_parameters/distorted_image.png", cv_image)
+            assert 1 == 0
+
+        roi_rectified_image = image_rectification(cv_image, self.camera_parameters_path+self.config)
 
         roi_rectified_image = cv2_to_imgmsg(roi_rectified_image, self.encoding)
         roi_rectified_image.header.stamp = current_ros_time
         roi_rectified_image.header.frame_id = self.camera_frame 
-        # rectified_image_info = build_camera_info_from_file(self.camera_frame, camera_parameters_path, 
-        #                                                    self.camera_position_3Dcenter[0], current_ros_time)
+        # rectified_image_info = build_camera_info_from_file(self.camera_frame, self.camera_parameters_path+self.config, 
+        #                                                    self.camera_position_3Dcenter[0,0], self.camera_position_3Dcenter[0,1], current_ros_time)
         rectified_image_info = build_camera_info(roi_rectified_image.width, roi_rectified_image.height, self.f, 
                                                  self.camera_position_3Dcenter[0,0], self.camera_position_3Dcenter[0,1], 
                                                  current_ros_time)
@@ -318,7 +371,7 @@ class RobesafeAgent(AutonomousAgent):
         gnss_pose_msg.pose.pose.orientation.z = qz
         gnss_pose_msg.pose.pose.orientation.w = qw
 
-        gnns_error = 10.5
+        gnns_error = 1.5
         gnss_pose_msg.pose.covariance = np.diag([gnns_error, gnns_error, gnns_error, 0, 0, 0]).ravel()
 
         self.pub_gnss_pose.publish(gnss_pose_msg)
@@ -380,9 +433,5 @@ class RobesafeAgent(AutonomousAgent):
         """
 
         self.t4ac_architecture_launch.shutdown()
-        # self.t4ac_config_launch.shutdown()
-        # self.t4ac_control_launch.shutdown()
-        # self.t4ac_localization_launch.shutdown()
-        # self.t4ac_decision_making_launch.shutdown()
 
         pass
