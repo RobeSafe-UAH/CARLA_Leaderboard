@@ -40,7 +40,7 @@ import numpy as np
 # Custom functions imports
 
 from modules.geometric_functions import euler_to_quaternion
-from modules.bridge_functions import build_camera_info, build_camera_info_from_file, cv2_to_imgmsg, image_rectification, get_input_route_list
+from modules.bridge_functions import build_camera_info, build_camera_info_from_file, cv2_to_imgmsg, image_rectification, get_input_route_list, lidar_string_to_array
 from t4ac_global_planner_ros.src.lane_waypoint_planner import LaneWaypointPlanner
 
 ### Auxiliar functions
@@ -166,18 +166,21 @@ class RobesafeAgent(AutonomousAgent):
 
         self.camera_position = rospy.get_param('/t4ac/tf/base_link_to_camera_tf')
         self.xcam, self.ycam, self.zcam = self.camera_position[:3]
+        self.lidar_position = rospy.get_param('/t4ac/tf/base_link_to_lidar_tf')
+        self.xlidar, self.ylidar, self.zlidar = self.lidar_position[:3]
         self.gnss_position = rospy.get_param('/t4ac/tf/base_link_to_gnss_tf')
         self.xgnss, self.ygnss, self.zgnss = self.gnss_position[:3]
         
         print("\033[1;31m"+"End init configuration: "+'\033[0;m')
 
     # Specify your sensors
+
     def sensors(self):
         sensors =  [
                     {'type': 'sensor.camera.rgb', 'x': self.xcam, 'y': self.ycam, 'z': self.zcam, 
                       'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,'width': 
                       self.width, 'height': self.height, 'fov': self.fov, 'id': 'Camera'},
-                    {'type': 'sensor.lidar.ray_cast', 'x': 0.0, 'y': 0.0, 'z': 1.8, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'id': 'LiDAR'},
+                    {'type': 'sensor.lidar.ray_cast', 'x': self.xlidar, 'y': self.ylidar, 'z': self.zlidar, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'id': 'LiDAR'},
                     {'type': 'sensor.other.gnss', 'x': self.xgnss, 'y': self.ygnss, 'z': self.zgnss, 'id': 'GNSS'},
                     {'type': 'sensor.other.imu', 'x': self.xgnss, 'y': self.ygnss, 'z': self.zgnss, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'id': 'IMU'},
                     {'type': 'sensor.opendrive_map', 'reading_frequency': 1, 'id': 'OpenDRIVE'},
@@ -187,6 +190,7 @@ class RobesafeAgent(AutonomousAgent):
         return sensors
 
     # Run step function
+
     def run_step(self, input_data, timestamp):
         """
         Execute one step of navigation. Gather the sensor information
@@ -194,6 +198,7 @@ class RobesafeAgent(AutonomousAgent):
         current_ros_time = rospy.Time.now()
 
         # Get sensor data
+
         actual_speed = (input_data['Speed'][1])['speed']
         gnss = (input_data['GNSS'][1])
         imu = (input_data['IMU'][1])
@@ -203,17 +208,18 @@ class RobesafeAgent(AutonomousAgent):
         if self.trajectory_flag:
             print("Keys: ", input_data.keys())
             hd_map = (input_data['OpenDRIVE'][1])
-            # hd_map = hd_map['opendrive'].split('\n')
             distance_among_waypoints = 2
             self.LWP = LaneWaypointPlanner(hd_map['opendrive'],1)
             self.route = self.LWP.calculate_waypoint_route_multiple(distance_among_waypoints, self._global_plan_world_coord, 1)
             self.trajectory_flag = False
 
         # Publish until control has started   
+
         if actual_speed < 0.2:
             self.LWP.publish_waypoints(self.route)
         
         # Callbacks
+
         self.gnss_imu_callback(gnss, imu, current_ros_time)
         self.cameras_callback(camera, current_ros_time)
         self.lidar_callback(lidar, current_ros_time) 
@@ -223,53 +229,35 @@ class RobesafeAgent(AutonomousAgent):
 
     # Callbacks
 
-    def lidar_string_to_array(self,lidar,whole_cloud=None):
-        """
-        Return the LiDAR pointcloud in numpy.array format based on a string. Every time, half (in this case) of the cloud
-        is computed due to the LiDAR frequency, so if whole_cloud == True, we concatenate two consecutive pointclouds
-        """
-        lidar_data = np.fromstring(lidar, dtype=np.float32)
-        lidar_data = np.reshape(lidar_data, (int(lidar_data.shape[0] / 4), 4))
-
-        # we take the oposite of y axis (since in CARLA a LiDAR point is 
-        # expressed in left-handed coordinate system, and ROS needs right-handed)
-
-        lidar_data[:, 1] *= -1
-
-        if whole_cloud:
-            lidar_data = np.concatenate((self.half_cloud,lidar_data),axis=0)
-
-        return lidar_data
-
     def lidar_callback(self, lidar, current_ros_time):
         """
         Return the LiDAR pointcloud as a sensor_msgs.PointCloud2 ROS message based on a string that contains
         the LiDAR information
         """
-        while not rospy.is_shutdown():
-            self.lidar_count += 1
-            if (self.lidar_count % 2 == 0):
-                self.lidar_count = 0
+        # while not rospy.is_shutdown():
+        self.lidar_count += 1
+        if (self.lidar_count % 2 == 0):
+            self.lidar_count = 0
 
-                header = Header()
-                header.stamp = current_ros_time
-                header.frame_id = self.lidar_frame
+            header = Header()
+            header.stamp = current_ros_time
+            header.frame_id = self.lidar_frame
 
-                whole_cloud = True
+            whole_cloud = True
 
-                lidar_data = self.lidar_string_to_array(lidar,whole_cloud)
+            lidar_data = lidar_string_to_array(lidar,self.half_cloud,whole_cloud)
 
-                fields = [PointField('x', 0, PointField.FLOAT32, 1),
+            fields = [
+                        PointField('x', 0, PointField.FLOAT32, 1),
                         PointField('y', 4, PointField.FLOAT32, 1),
                         PointField('z', 8, PointField.FLOAT32, 1),
                         PointField('intensity', 12, PointField.FLOAT32, 1),
                         ]
-                point_cloud_msg = create_cloud(header, fields, lidar_data)
-                self.pub_lidar_pointcloud.publish(point_cloud_msg)
-            else:
-                self.half_cloud = self.lidar_string_to_array(lidar)
-
-            return
+            point_cloud_msg = create_cloud(header, fields, lidar_data)
+            self.pub_lidar_pointcloud.publish(point_cloud_msg)
+        else:
+            self.half_cloud = lidar_string_to_array(lidar)
+        # return
 
     def cameras_callback(self, raw_image, current_ros_time):
         """

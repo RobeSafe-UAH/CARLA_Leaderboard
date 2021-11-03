@@ -43,23 +43,23 @@ def old_get_input_route_list(origin, global_plan):
 
     return input_route_list
 
-# def lidar_string_to_array(lidar,whole_cloud=None):
-#     """
-#     Return the LiDAR pointcloud in numpy.array format based on a string. Every time, half (in this case) of the cloud
-#     is computed due to the LiDAR frequency, so if whole_cloud == True, we concatenate two consecutive pointclouds
-#     """
-#     lidar_data = np.fromstring(lidar, dtype=np.float32)
-#     lidar_data = np.reshape(lidar_data, (int(lidar_data.shape[0] / 4), 4))
+def lidar_string_to_array(lidar, half_cloud=None, whole_cloud=None):
+    """
+    Return the LiDAR pointcloud in numpy.array format based on a string. Every time, half (in this case) of the cloud
+    is computed due to the LiDAR frequency, so if whole_cloud == True, we concatenate two consecutive pointclouds
+    """
+    lidar_data = np.fromstring(lidar, dtype=np.float32)
+    lidar_data = np.reshape(lidar_data, (int(lidar_data.shape[0] / 4), 4))
 
-#     # we take the oposite of y axis (since in CARLA a LiDAR point is 
-#     # expressed in left-handed coordinate system, and ROS needs right-handed)
+    # We take the oposite of y axis (since in CARLA a LiDAR point is 
+    # expressed in left-handed coordinate system, and ROS needs right-handed)
 
-#     lidar_data[:, 1] *= -1
+    lidar_data[:, 1] *= -1
 
-#     if whole_cloud:
-#         lidar_data = np.concatenate((self.half_cloud,lidar_data),axis=0)
+    if whole_cloud:
+        lidar_data = np.concatenate((half_cloud,lidar_data),axis=0)
 
-#     return lidar_data
+    return lidar_data
 
 def cv2_to_imgmsg(cvim, encoding = "passthrough"):
     """
