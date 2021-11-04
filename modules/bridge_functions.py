@@ -9,40 +9,6 @@ from t4ac_global_planner_ros.src.lane_waypoint_planner import LaneWaypointPlanne
 from t4ac_map_monitor_ros.src.modules import markers_module, monitor_classes
 from sensor_msgs.msg import PointCloud2, PointField, Image, CameraInfo
 
-def old_get_input_route_list(origin, global_plan):
-    """
-    Return a T4ac_location points list (required by our path planner) based on a high-level route description 
-    indicating the path to follow in order to reach the destination 
-    """
-    input_route_list = []
-
-    for global_plan_data in global_plan:
-        point_t4ac_location = T4ac_Location()
-
-        aux = [0,0]
-        u = utm.from_latlon(abs(global_plan_data[0]['lat']) , abs(global_plan_data[0]['lon']))
-        u = (u[0]-origin[0],u[1]-origin[1])
-
-        if (global_plan_data[0]['lat'] > 0):
-            aux[1] = -u[1]
-        else:
-            aux[1] = u[1]
-            pass
-
-        if (global_plan_data[0]['lon'] < 0):
-            aux[0] = -u[0]
-        else:
-            aux[0] = u[0]
-            pass
-
-        point_t4ac_location.x = aux[0]
-        point_t4ac_location.y = -aux[1]
-        point_t4ac_location.z = 0
-
-        input_route_list.append(point_t4ac_location)
-
-    return input_route_list
-
 def lidar_string_to_array(lidar, half_cloud=None, whole_cloud=None):
     """
     Return the LiDAR pointcloud in numpy.array format based on a string. Every time, half (in this case) of the cloud
@@ -97,14 +63,14 @@ def cv2_to_imgmsg(cvim, encoding = "passthrough"):
 
     return img_msg
 
-def build_camera_info(width, height, f, x, y, current_ros_time):
+def build_camera_info(width, height, f, x, y, current_ros_time, frame_id):
     """
     Private function to compute camera info
     camera info doesn't change over time
     """
     camera_info = CameraInfo()
     camera_info.header.stamp = current_ros_time
-    camera_info.header.frame_id = "camera"
+    camera_info.header.frame_id = frame_id
     camera_info.width = width
     camera_info.height = height
     camera_info.distortion_model = 'plumb_bob'

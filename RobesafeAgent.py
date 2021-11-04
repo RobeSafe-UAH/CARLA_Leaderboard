@@ -81,6 +81,8 @@ class RobesafeAgent(AutonomousAgent):
         self.cy = self.height / 2.0
         self.camera_position_3Dcenter = np.array([0, 0]).reshape(-1,2) # With respect to the first camera, that represents the 0,0
 
+        self.cameras_id = ["camera_center", "camera_left", "camera_right", "camera_rear"]
+
         # LiDAR
 
         self.half_cloud = []
@@ -108,10 +110,33 @@ class RobesafeAgent(AutonomousAgent):
 
         self.pub_gnss_pose = rospy.Publisher('/t4ac/localization/gnss_pose', Odometry, queue_size=1)
         self.pub_gnss_fix = rospy.Publisher('/t4ac/localization/fix', NavSatFix, queue_size=1)
-        self.pub_raw_image = rospy.Publisher('/t4ac/perception/sensors/raw_image', Image, queue_size=100)
-        self.pub_raw_image_info = rospy.Publisher('/t4ac/perception/sensors/raw_image_info', CameraInfo, queue_size = 100)
-        self.pub_rectified_image = rospy.Publisher('/t4ac/perception/sensors/rectified_image', Image, queue_size=100)
-        self.pub_rectified_image_info = rospy.Publisher('/t4ac/perception/sensors/rectified_image_info', CameraInfo, queue_size = 100)
+
+
+
+        self.pub_image_raw_center = rospy.Publisher('/t4ac/perception/sensors/center/image_raw', Image, queue_size=100)
+        self.pub_image_raw_left = rospy.Publisher('/t4ac/perception/sensors/left/image_raw', Image, queue_size=100)
+        self.pub_image_raw_right = rospy.Publisher('/t4ac/perception/sensors/right/image_raw', Image, queue_size=100)
+        self.pub_image_raw_rear  = rospy.Publisher('/t4ac/perception/sensors/rear/image_raw', Image, queue_size=100)
+
+
+
+        self.pub_camera_info_center = rospy.Publisher('/t4ac/perception/sensors/center/camera_info', CameraInfo, queue_size = 100)
+        self.pub_camera_info_left = rospy.Publisher('/t4ac/perception/sensors/left/camera_info', CameraInfo, queue_size=100)
+        self.pub_camera_info_right = rospy.Publisher('/t4ac/perception/sensors/right/camera_info', CameraInfo, queue_size=100)
+        self.pub_camera_info_rear  = rospy.Publisher('/t4ac/perception/sensors/rear/camera_info', CameraInfo, queue_size=100)
+
+
+
+        self.pub_image_rect_center = rospy.Publisher('/t4ac/perception/sensors/center/image_rect', Image, queue_size=100)
+        self.pub_image_rect_left = rospy.Publisher('/t4ac/perception/sensors/left/image_rect', Image, queue_size=100)
+        self.pub_image_rect_right = rospy.Publisher('/t4ac/perception/sensors/right/image_rect', Image, queue_size=100)
+        self.pub_image_rect_rear = rospy.Publisher('/t4ac/perception/sensors/rear/image_rect', Image, queue_size=100)
+
+        self.pub_camera_info_rect_center = rospy.Publisher('/t4ac/perception/sensors/center/rect/camera_info', CameraInfo, queue_size = 100)
+        self.pub_camera_info_rect_left = rospy.Publisher('/t4ac/perception/sensors/left/rect/camera_info', CameraInfo, queue_size = 100)
+        self.pub_camera_info_rect_right = rospy.Publisher('/t4ac/perception/sensors/right/rect/camera_info', CameraInfo, queue_size = 100)
+        self.pub_camera_info_rect_rear = rospy.Publisher('/t4ac/perception/sensors/rear/rect/camera_info', CameraInfo, queue_size = 100)
+
         self.pub_lidar_pointcloud = rospy.Publisher('/t4ac/perception/sensors/lidar', PointCloud2, queue_size=10)
         self.pub_waypoints_visualizator = rospy.Publisher("/mapping_planning/debug/waypoints", visualization_msgs.msg.Marker, queue_size = 10)
        
@@ -164,8 +189,17 @@ class RobesafeAgent(AutonomousAgent):
         # leftwards and z backwards (that is, the ORIENTATION of the sensor). BUT, in the configuration file you specify the final position
         # of your frame w.r.t. the origin (a camera would be z frontwards, x rightwards and y downwards)
 
-        self.camera_position = rospy.get_param('/t4ac/tf/base_link_to_camera_tf')
-        self.xcam, self.ycam, self.zcam = self.camera_position[:3]
+        self.camera_position = rospy.get_param('/t4ac/tf/base_link_to_camera_center_tf')
+        self.xcam_center, self.ycam_center, self.zcam_center = self.camera_position[:3]
+        self.camera_position = rospy.get_param('/t4ac/tf/base_link_to_camera_left_tf')
+        self.xcam_left, self.ycam_left, self.zcam_left = self.camera_position[:3]
+        self.camera_position = rospy.get_param('/t4ac/tf/base_link_to_camera_right_tf')
+        self.xcam_right, self.ycam_right, self.zcam_right = self.camera_position[:3]
+        self.camera_position = rospy.get_param('/t4ac/tf/base_link_to_camera_rear_tf')
+        self.xcam_rear, self.ycam_rear, self.zcam_rear = self.camera_position[:3]
+
+
+
         self.lidar_position = rospy.get_param('/t4ac/tf/base_link_to_lidar_tf')
         self.xlidar, self.ylidar, self.zlidar = self.lidar_position[:3]
         self.gnss_position = rospy.get_param('/t4ac/tf/base_link_to_gnss_tf')
@@ -177,9 +211,19 @@ class RobesafeAgent(AutonomousAgent):
 
     def sensors(self):
         sensors =  [
-                    {'type': 'sensor.camera.rgb', 'x': self.xcam, 'y': self.ycam, 'z': self.zcam, 
+                    {'type': 'sensor.camera.rgb', 'x': self.xcam_center, 'y': self.ycam_center, 'z': self.zcam_center, 
                       'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,'width': 
-                      self.width, 'height': self.height, 'fov': self.fov, 'id': 'Camera'},
+                      self.width, 'height': self.height, 'fov': self.fov, 'id': 'Camera_center'},
+                    {'type': 'sensor.camera.rgb', 'x': self.xcam_left, 'y': self.ycam_left, 'z': self.zcam_left, 
+                      'roll': 0.0, 'pitch': 0.0, 'yaw': -90.0,'width': 
+                      self.width, 'height': self.height, 'fov': self.fov, 'id': 'Camera_left'},
+                    {'type': 'sensor.camera.rgb', 'x': self.xcam_right, 'y': self.ycam_right, 'z': self.zcam_right, 
+                      'roll': 0.0, 'pitch': 0.0, 'yaw': 90.0,'width': 
+                      self.width, 'height': self.height, 'fov': self.fov, 'id': 'Camera_right'},
+                    {'type': 'sensor.camera.rgb', 'x': self.xcam_rear, 'y': self.ycam_rear, 'z': self.zcam_rear, 
+                      'roll': 0.0, 'pitch': 0.0, 'yaw': 180.0,'width': 
+                      self.width, 'height': self.height, 'fov': self.fov, 'id': 'Camera_rear'},  
+
                     {'type': 'sensor.lidar.ray_cast', 'x': self.xlidar, 'y': self.ylidar, 'z': self.zlidar, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'id': 'LiDAR'},
                     {'type': 'sensor.other.gnss', 'x': self.xgnss, 'y': self.ygnss, 'z': self.zgnss, 'id': 'GNSS'},
                     {'type': 'sensor.other.imu', 'x': self.xgnss, 'y': self.ygnss, 'z': self.zgnss, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'id': 'IMU'},
@@ -202,8 +246,13 @@ class RobesafeAgent(AutonomousAgent):
         actual_speed = (input_data['Speed'][1])['speed']
         gnss = (input_data['GNSS'][1])
         imu = (input_data['IMU'][1])
-        camera = (input_data['Camera'][1])
+        camera_center = (input_data['Camera_center'][1])
+        camera_left = (input_data['Camera_left'][1])
+        camera_right = (input_data['Camera_right'][1])
+        camera_rear = (input_data['Camera_rear'][1])
         lidar = (input_data['LiDAR'][1])
+
+        cameras = [camera_center, camera_left, camera_right, camera_rear]
 
         if self.trajectory_flag:
             print("Keys: ", input_data.keys())
@@ -221,7 +270,8 @@ class RobesafeAgent(AutonomousAgent):
         # Callbacks
 
         self.gnss_imu_callback(gnss, imu, current_ros_time)
-        self.cameras_callback(camera, current_ros_time)
+        self.cameras_callback(cameras, current_ros_time)
+
         self.lidar_callback(lidar, current_ros_time) 
         control = self.control_callback(actual_speed)
 
@@ -259,42 +309,58 @@ class RobesafeAgent(AutonomousAgent):
             self.half_cloud = lidar_string_to_array(lidar)
         # return
 
-    def cameras_callback(self, raw_image, current_ros_time):
+    def cameras_callback(self, cameras, current_ros_time):
         """
         Return the information of the correspondin camera as a sensor_msgs.Image ROS message based on a string 
         that contains the camera information
         """
 
-        raw_image = cv2_to_imgmsg(raw_image, self.encoding)
-        raw_image.header.stamp = current_ros_time
-        raw_image.header.frame_id = self.camera_frame
-        # raw_image_info = build_camera_info(self.width, self.height, self.f, 
-        #                                    self.camera_position_3Dcenter[0,0], self.camera_position_3Dcenter[0,1], 
-        #                                    current_ros_time)
+        for i, raw_image in enumerate(cameras):
+            raw_image = cv2_to_imgmsg(raw_image, self.encoding)
+            raw_image.header.stamp = current_ros_time
+            raw_image.header.frame_id = self.cameras_id[i]
         
-        self.pub_raw_image.publish(raw_image)
-        # self.pub_raw_image_info.publish(raw_image_info)
+            # Rectify the image
 
-        # Rectify the image
+            cv_image = self.bridge.imgmsg_to_cv2(raw_image, desired_encoding='passthrough')
 
-        cv_image = self.bridge.imgmsg_to_cv2(raw_image, desired_encoding='passthrough')
+            if self.calibrate_camera:
+                cv2.imwrite("/workspace/team_code/modules/camera_parameters/distorted_image.png", cv_image)
+                assert 1 == 0
 
-        if self.calibrate_camera:
-            cv2.imwrite("/workspace/team_code/modules/camera_parameters/distorted_image.png", cv_image)
-            assert 1 == 0
+            roi_rectified_image = image_rectification(cv_image, self.camera_parameters_path+self.config)
 
-        roi_rectified_image = image_rectification(cv_image, self.camera_parameters_path+self.config)
+            roi_rectified_image = cv2_to_imgmsg(roi_rectified_image, self.encoding)
+            roi_rectified_image.header.stamp = current_ros_time
+            roi_rectified_image.header.frame_id = self.cameras_id[i]
+            # rectified_image_info = build_camera_info_from_file(self.camera_frame, self.camera_parameters_path+self.config, 
+            #                                                    self.camera_position_3Dcenter[0,0], self.camera_position_3Dcenter[0,1], current_ros_time)
+            rectified_image_info = build_camera_info(roi_rectified_image.width, roi_rectified_image.height, self.f, 
+                                                    self.camera_position_3Dcenter[0,0], self.camera_position_3Dcenter[0,1], 
+                                                    current_ros_time, self.cameras_id[i])
 
-        roi_rectified_image = cv2_to_imgmsg(roi_rectified_image, self.encoding)
-        roi_rectified_image.header.stamp = current_ros_time
-        roi_rectified_image.header.frame_id = self.camera_frame 
-        # rectified_image_info = build_camera_info_from_file(self.camera_frame, self.camera_parameters_path+self.config, 
-        #                                                    self.camera_position_3Dcenter[0,0], self.camera_position_3Dcenter[0,1], current_ros_time)
-        rectified_image_info = build_camera_info(roi_rectified_image.width, roi_rectified_image.height, self.f, 
-                                                 self.camera_position_3Dcenter[0,0], self.camera_position_3Dcenter[0,1], 
-                                                 current_ros_time)
-        self.pub_rectified_image.publish(roi_rectified_image)
-        self.pub_rectified_image_info.publish(rectified_image_info)
+
+            #  Publish information 
+            if (self.cameras_id[i] == 'camera_center'):
+                self.pub_image_raw_center.publish(raw_image)
+                # self.pub_camera_info_center.publish(raw_image_info)
+                self.pub_image_rect_center.publish(roi_rectified_image)
+                self.pub_camera_info_rect_center.publish(rectified_image_info)
+            elif (self.cameras_id[i] == 'camera_left'):
+                self.pub_image_raw_left.publish(raw_image)
+                # self.pub_camera_info_left.publish(raw_image_info)
+                self.pub_image_rect_left.publish(roi_rectified_image)
+                self.pub_camera_info_rect_left.publish(rectified_image_info)
+            elif (self.cameras_id[i] == 'camera_right'):
+                self.pub_image_raw_right.publish(raw_image)
+                # self.pub_camera_info_right.publish(raw_image_info)
+                self.pub_image_rect_right.publish(roi_rectified_image)
+                self.pub_camera_info_rect_right.publish(rectified_image_info)
+            elif (self.cameras_id[i] == 'camera_rear'):
+                self.pub_image_raw_rear.publish(raw_image)
+                # self.pub_camera_info_rear.publish(raw_image_info)
+                self.pub_image_rect_rear.publish(roi_rectified_image)
+                self.pub_camera_info_rect_rear.publish(rectified_image_info)
 
     def gnss_imu_callback(self, gnss, imu, current_ros_time):
         """
