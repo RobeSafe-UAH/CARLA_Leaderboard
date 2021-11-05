@@ -252,6 +252,8 @@ class RobesafeAgent(AutonomousAgent):
             hd_map = (input_data['OpenDRIVE'][1])
             distance_among_waypoints = 2
             self.LWP = LaneWaypointPlanner(hd_map['opendrive'],1)
+            self.map_name = self.LWP.map_name
+            rospy.set_param('/t4ac/map_parameters/map_name', self.map_name)
             self.route = self.LWP.calculate_waypoint_route_multiple(distance_among_waypoints, self._global_plan_world_coord, 1)
             self.trajectory_flag = False
 
