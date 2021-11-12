@@ -71,15 +71,44 @@ class RobesafeAgent(AutonomousAgent):
         self.calibrate_camera = False
         self.encoding = "bgra8"
         self.bridge = CvBridge()
-        self.width = 1920 # 2060, 1080
+        self.width = 1920 # 2060, 1920
         self.height = 1080 # 1080, 540
         self.fov = 80 # 80, 60
         self.camera_parameters_path = '/workspace/team_code/modules/camera_parameters/'
-        self.config = 'camera_parameters_'+str(self.width)+'_'+str(self.height)+'_'+str(self.fov)+'/' 
+        self.config = 'camera_parameters_' + str(self.width) + '_' + str(self.height) + '_' + str(self.fov) + '/' 
         self.f = self.width / (2.0 * math.tan(self.fov * math.pi / 360.0))
         self.cx = self.width / 2.0
         self.cy = self.height / 2.0
         self.camera_position_3Dcenter = np.array([0, 0]).reshape(-1,2) # With respect to the first camera, that represents the 0,0
+
+        # Camera center parameters
+        self.width_center = 1920 # 2060, 1920
+        self.height_center = 1080 # 1080, 540
+        self.fov_center = 80 # 80, 60
+        self.f_center = self.width_center / (2.0 * math.tan(self.fov_center * math.pi / 360.0))
+        self.cx_center = self.width_center / 2.0
+        self.cy_center = self.height_center / 2.0
+        self.config_center = 'camera_parameters_' + str(self.width_center) + '_' + str(self.height_center) + '_' + str(self.fov_center) + '/' 
+
+        # Camera right parameters
+        self.width_right = 1920 # 2060, 1920
+        self.height_right = 1080 # 1080, 540
+        self.fov_right = 80 # 80, 60
+        self.f_right = self.width_right / (2.0 * math.tan(self.fov_right * math.pi / 360.0))
+        self.cx_right = self.width_right / 2.0
+        self.cy_right = self.height_right / 2.0
+        self.config_right = 'camera_parameters_' + str(self.width_right) + '_' + str(self.height_right) + '_' + str(self.fov_right) + '/' 
+       
+        # Camera right parameters
+        self.width_left = 1920 # 2060, 1920
+        self.height_left = 1080 # 1080, 540
+        self.fov_left = 80 # 80, 60
+        self.f_left = self.width_left / (2.0 * math.tan(self.fov_left * math.pi / 360.0))
+        self.cx_left = self.width_left / 2.0
+        self.cy_left = self.height_left / 2.0
+        self.config_left = 'camera_parameters_' + str(self.width_left) + '_' + str(self.height_left) + '_' + str(self.fov_right) + '/' 
+
+        self.cameras_id = ["camera_center", "camera_left", "camera_right"]
 
         # LiDAR
 
@@ -112,22 +141,22 @@ class RobesafeAgent(AutonomousAgent):
         self.pub_image_raw_center = rospy.Publisher('/t4ac/perception/sensors/center/image_raw', Image, queue_size=100)
         self.pub_image_raw_left = rospy.Publisher('/t4ac/perception/sensors/left/image_raw', Image, queue_size=100)
         self.pub_image_raw_right = rospy.Publisher('/t4ac/perception/sensors/right/image_raw', Image, queue_size=100)
-        self.pub_image_raw_rear  = rospy.Publisher('/t4ac/perception/sensors/rear/image_raw', Image, queue_size=100)
+        # self.pub_image_raw_rear  = rospy.Publisher('/t4ac/perception/sensors/rear/image_raw', Image, queue_size=100)
 
         self.pub_camera_info_center = rospy.Publisher('/t4ac/perception/sensors/center/camera_info', CameraInfo, queue_size = 100)
         self.pub_camera_info_left = rospy.Publisher('/t4ac/perception/sensors/left/camera_info', CameraInfo, queue_size=100)
         self.pub_camera_info_right = rospy.Publisher('/t4ac/perception/sensors/right/camera_info', CameraInfo, queue_size=100)
-        self.pub_camera_info_rear  = rospy.Publisher('/t4ac/perception/sensors/rear/camera_info', CameraInfo, queue_size=100)
+        # self.pub_camera_info_rear  = rospy.Publisher('/t4ac/perception/sensors/rear/camera_info', CameraInfo, queue_size=100)
 
         self.pub_image_rect_center = rospy.Publisher('/t4ac/perception/sensors/center/image_rect', Image, queue_size=100)
         self.pub_image_rect_left = rospy.Publisher('/t4ac/perception/sensors/left/image_rect', Image, queue_size=100)
         self.pub_image_rect_right = rospy.Publisher('/t4ac/perception/sensors/right/image_rect', Image, queue_size=100)
-        self.pub_image_rect_rear = rospy.Publisher('/t4ac/perception/sensors/rear/image_rect', Image, queue_size=100)
+        # self.pub_image_rect_rear = rospy.Publisher('/t4ac/perception/sensors/rear/image_rect', Image, queue_size=100)
 
         self.pub_camera_info_rect_center = rospy.Publisher('/t4ac/perception/sensors/center/rect/camera_info', CameraInfo, queue_size = 100)
         self.pub_camera_info_rect_left = rospy.Publisher('/t4ac/perception/sensors/left/rect/camera_info', CameraInfo, queue_size = 100)
         self.pub_camera_info_rect_right = rospy.Publisher('/t4ac/perception/sensors/right/rect/camera_info', CameraInfo, queue_size = 100)
-        self.pub_camera_info_rect_rear = rospy.Publisher('/t4ac/perception/sensors/rear/rect/camera_info', CameraInfo, queue_size = 100)
+        # self.pub_camera_info_rect_rear = rospy.Publisher('/t4ac/perception/sensors/rear/rect/camera_info', CameraInfo, queue_size = 100)
 
         self.pub_lidar_pointcloud = rospy.Publisher('/t4ac/perception/sensors/lidar', PointCloud2, queue_size=10)
        
@@ -168,8 +197,8 @@ class RobesafeAgent(AutonomousAgent):
         camera_center_frame = rospy.get_param('/t4ac/frames/camera_center')
         camera_left_frame = rospy.get_param('/t4ac/frames/camera_left')
         camera_right_frame = rospy.get_param('/t4ac/frames/camera_right')
-        camera_rear_frame = rospy.get_param('/t4ac/frames/camera_rear')
-        self.cameras_frames = [camera_center_frame, camera_left_frame, camera_right_frame, camera_rear_frame]
+        # camera_rear_frame = rospy.get_param('/t4ac/frames/camera_rear')
+        self.cameras_frames = [camera_center_frame, camera_left_frame, camera_right_frame]
         
         self.lidar_frame = rospy.get_param('/t4ac/frames/lidar')
 
@@ -188,12 +217,15 @@ class RobesafeAgent(AutonomousAgent):
 
         self.camera_position = rospy.get_param('/t4ac/tf/base_link_to_camera_center_tf')
         self.xcam_center, self.ycam_center, self.zcam_center = self.camera_position[:3]
+
         self.camera_position = rospy.get_param('/t4ac/tf/base_link_to_camera_left_tf')
         self.xcam_left, self.ycam_left, self.zcam_left = self.camera_position[:3]
+        self.yaw_left = (self.camera_position[5] + 1.57079632679) * (-90 / 1.5707963)
+
         self.camera_position = rospy.get_param('/t4ac/tf/base_link_to_camera_right_tf')
         self.xcam_right, self.ycam_right, self.zcam_right = self.camera_position[:3]
-        self.camera_position = rospy.get_param('/t4ac/tf/base_link_to_camera_rear_tf')
-        self.xcam_rear, self.ycam_rear, self.zcam_rear = self.camera_position[:3]
+        self.yaw_right = (self.camera_position[5] + 1.57079632679) * (-90 / 1.57079632679)
+
         self.lidar_position = rospy.get_param('/t4ac/tf/base_link_to_lidar_tf')
         self.xlidar, self.ylidar, self.zlidar = self.lidar_position[:3]
         self.gnss_position = rospy.get_param('/t4ac/tf/base_link_to_gnss_tf')
@@ -207,13 +239,16 @@ class RobesafeAgent(AutonomousAgent):
         sensors =  [
                     {'type': 'sensor.camera.rgb', 'x': self.xcam_center, 'y': self.ycam_center, 'z': self.zcam_center, 
                       'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,'width': 
-                      self.width, 'height': self.height, 'fov': self.fov, 'id': 'Camera_center'},
-                    # {'type': 'sensor.camera.rgb', 'x': self.xcam_left, 'y': self.ycam_left, 'z': self.zcam_left, 
-                    #   'roll': 0.0, 'pitch': 0.0, 'yaw': -90.0,'width': 
-                    #   self.width, 'height': self.height, 'fov': self.fov, 'id': 'Camera_left'},
-                    # {'type': 'sensor.camera.rgb', 'x': self.xcam_right, 'y': self.ycam_right, 'z': self.zcam_right, 
-                    #   'roll': 0.0, 'pitch': 0.0, 'yaw': 90.0,'width': 
-                    #   self.width, 'height': self.height, 'fov': self.fov, 'id': 'Camera_right'},
+                      self.width_center, 'height': self.height_center, 'fov': self.fov_center, 'id': 'Camera_center'},
+
+                    {'type': 'sensor.camera.rgb', 'x': self.xcam_left, 'y': self.ycam_left, 'z': self.zcam_left, 
+                      'roll': 0.0, 'pitch': 0.0, 'yaw': self.yaw_left,'width': 
+                      self.width_left, 'height': self.height_left, 'fov': self.fov_left, 'id': 'Camera_left'},
+
+                    {'type': 'sensor.camera.rgb', 'x': self.xcam_right, 'y': self.ycam_right, 'z': self.zcam_right, 
+                      'roll': 0.0, 'pitch': 0.0, 'yaw': self.yaw_right,'width': 
+                      self.width_right, 'height': self.height_right, 'fov': self.fov_right, 'id': 'Camera_right'},
+
                     # {'type': 'sensor.camera.rgb', 'x': self.xcam_rear, 'y': self.ycam_rear, 'z': self.zcam_rear, 
                     #   'roll': 0.0, 'pitch': 0.0, 'yaw': 180.0,'width': 
                     #   self.width, 'height': self.height, 'fov': self.fov, 'id': 'Camera_rear'},  
@@ -321,8 +356,7 @@ class RobesafeAgent(AutonomousAgent):
             cv_image = self.bridge.imgmsg_to_cv2(raw_image, desired_encoding='passthrough')
 
             if self.calibrate_camera:
-                cv2.imwrite("/workspace/team_code/modules/camera_parameters/distorted_image.png", cv_image)
-                assert 1 == 0
+                cv2.imwrite("/workspace/team_code/modules/camera_parameters/distorted_image_" + str(self.cameras_id[i]) + ".png", cv_image)
 
             roi_rectified_image = image_rectification(cv_image, self.camera_parameters_path+self.config)
 
@@ -352,11 +386,11 @@ class RobesafeAgent(AutonomousAgent):
                 # self.pub_camera_info_right.publish(raw_image_info)
                 self.pub_image_rect_right.publish(roi_rectified_image)
                 self.pub_camera_info_rect_right.publish(rectified_image_info)
-            elif (self.cameras_frames[i] == 'ego_vehicle/camera/rgb/rear'):
-                self.pub_image_raw_rear.publish(raw_image)
-                # self.pub_camera_info_rear.publish(raw_image_info)
-                self.pub_image_rect_rear.publish(roi_rectified_image)
-                self.pub_camera_info_rect_rear.publish(rectified_image_info)
+            # elif (self.cameras_frames[i] == 'ego_vehicle/camera/rgb/rear'):
+            #     self.pub_image_raw_rear.publish(raw_image)
+            #     # self.pub_camera_info_rear.publish(raw_image_info)
+            #     self.pub_image_rect_rear.publish(roi_rectified_image)
+            #     self.pub_camera_info_rect_rear.publish(rectified_image_info)
 
     def gnss_imu_callback(self, gnss, imu, current_ros_time):
         """
