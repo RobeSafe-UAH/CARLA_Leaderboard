@@ -21,8 +21,10 @@ import cv2
 # ROS imports
 
 import rospy
+import rosnode
 import roslaunch
 import rosgraph
+import visualization_msgs.msg
 from nav_msgs.msg import Odometry
 from sensor_msgs.point_cloud2 import create_cloud
 from sensor_msgs.msg import Image, CameraInfo, NavSatFix, NavSatStatus, PointCloud2, PointField
@@ -63,10 +65,50 @@ class RobesafeAgent(AutonomousAgent):
 
         # Cameras
 
+        # TODO: Build camera info using the ROI K matrix and build here, NOT IN THE CALLBACK, ADDING THE CAMERA_FRAME
+        # AS ARGUMENT
+
         self.calibrate_camera = False
         self.encoding = "bgra8"
         self.bridge = CvBridge()
+        self.width = 1920 # 2060, 1920
+        self.height = 1080 # 1080, 540
+        self.fov = 80 # 80, 60
         self.camera_parameters_path = '/workspace/team_code/modules/camera_parameters/'
+        self.config = 'camera_parameters_' + str(self.width) + '_' + str(self.height) + '_' + str(self.fov) + '/' 
+        self.f = self.width / (2.0 * math.tan(self.fov * math.pi / 360.0))
+        self.cx = self.width / 2.0
+        self.cy = self.height / 2.0
+        self.camera_position_3Dcenter = np.array([0, 0]).reshape(-1,2) # With respect to the first camera, that represents the 0,0
+
+        # Camera center parameters
+        self.width_center = 1920 # 2060, 1920
+        self.height_center = 1080 # 1080, 540
+        self.fov_center = 80 # 80, 60
+        self.f_center = self.width_center / (2.0 * math.tan(self.fov_center * math.pi / 360.0))
+        self.cx_center = self.width_center / 2.0
+        self.cy_center = self.height_center / 2.0
+        self.config_center = 'camera_parameters_' + str(self.width_center) + '_' + str(self.height_center) + '_' + str(self.fov_center) + '/' 
+
+        # Camera right parameters
+        self.width_right = 1920 # 2060, 1920
+        self.height_right = 1080 # 1080, 540
+        self.fov_right = 80 # 80, 60
+        self.f_right = self.width_right / (2.0 * math.tan(self.fov_right * math.pi / 360.0))
+        self.cx_right = self.width_right / 2.0
+        self.cy_right = self.height_right / 2.0
+        self.config_right = 'camera_parameters_' + str(self.width_right) + '_' + str(self.height_right) + '_' + str(self.fov_right) + '/' 
+       
+        # Camera right parameters
+        self.width_left = 1920 # 2060, 1920
+        self.height_left = 1080 # 1080, 540
+        self.fov_left = 80 # 80, 60
+        self.f_left = self.width_left / (2.0 * math.tan(self.fov_left * math.pi / 360.0))
+        self.cx_left = self.width_left / 2.0
+        self.cy_left = self.height_left / 2.0
+        self.config_left = 'camera_parameters_' + str(self.width_left) + '_' + str(self.height_left) + '_' + str(self.fov_right) + '/' 
+
+        self.cameras_id = ["camera_center", "camera_left", "camera_right"]
 
         # LiDAR
 
@@ -95,6 +137,27 @@ class RobesafeAgent(AutonomousAgent):
 
         self.pub_gnss_pose = rospy.Publisher('/t4ac/localization/gnss_pose', Odometry, queue_size=1)
         self.pub_gnss_fix = rospy.Publisher('/t4ac/localization/fix', NavSatFix, queue_size=1)
+
+        self.pub_image_raw_center = rospy.Publisher('/t4ac/perception/sensors/center/image_raw', Image, queue_size=100)
+        self.pub_image_raw_left = rospy.Publisher('/t4ac/perception/sensors/left/image_raw', Image, queue_size=100)
+        self.pub_image_raw_right = rospy.Publisher('/t4ac/perception/sensors/right/image_raw', Image, queue_size=100)
+        # self.pub_image_raw_rear  = rospy.Publisher('/t4ac/perception/sensors/rear/image_raw', Image, queue_size=100)
+
+        self.pub_camera_info_center = rospy.Publisher('/t4ac/perception/sensors/center/camera_info', CameraInfo, queue_size = 100)
+        self.pub_camera_info_left = rospy.Publisher('/t4ac/perception/sensors/left/camera_info', CameraInfo, queue_size=100)
+        self.pub_camera_info_right = rospy.Publisher('/t4ac/perception/sensors/right/camera_info', CameraInfo, queue_size=100)
+        # self.pub_camera_info_rear  = rospy.Publisher('/t4ac/perception/sensors/rear/camera_info', CameraInfo, queue_size=100)
+
+        self.pub_image_rect_center = rospy.Publisher('/t4ac/perception/sensors/center/image_rect', Image, queue_size=100)
+        self.pub_image_rect_left = rospy.Publisher('/t4ac/perception/sensors/left/image_rect', Image, queue_size=100)
+        self.pub_image_rect_right = rospy.Publisher('/t4ac/perception/sensors/right/image_rect', Image, queue_size=100)
+        # self.pub_image_rect_rear = rospy.Publisher('/t4ac/perception/sensors/rear/image_rect', Image, queue_size=100)
+
+        self.pub_camera_info_rect_center = rospy.Publisher('/t4ac/perception/sensors/center/rect/camera_info', CameraInfo, queue_size = 100)
+        self.pub_camera_info_rect_left = rospy.Publisher('/t4ac/perception/sensors/left/rect/camera_info', CameraInfo, queue_size = 100)
+        self.pub_camera_info_rect_right = rospy.Publisher('/t4ac/perception/sensors/right/rect/camera_info', CameraInfo, queue_size = 100)
+        # self.pub_camera_info_rect_rear = rospy.Publisher('/t4ac/perception/sensors/rear/rect/camera_info', CameraInfo, queue_size = 100)
+
         self.pub_lidar_pointcloud = rospy.Publisher('/t4ac/perception/sensors/lidar', PointCloud2, queue_size=10)
        
         # Subscribers
@@ -107,6 +170,7 @@ class RobesafeAgent(AutonomousAgent):
         roslaunch.configure_logging(self.uuid)
 
         try:
+            # rosgraph.Master('/rosout').getPid()
             print("\033[1;31m"+"Try roscore"+'\033[0;m')
             rosgraph.Master('/rostopic').getPid()
         except:
@@ -129,6 +193,13 @@ class RobesafeAgent(AutonomousAgent):
 
         self.map_frame = rospy.get_param('/t4ac/frames/map')
         self.base_link_frame = rospy.get_param('/t4ac/frames/base_link')
+
+        camera_center_frame = rospy.get_param('/t4ac/frames/camera_center')
+        camera_left_frame = rospy.get_param('/t4ac/frames/camera_left')
+        camera_right_frame = rospy.get_param('/t4ac/frames/camera_right')
+        # camera_rear_frame = rospy.get_param('/t4ac/frames/camera_rear')
+        self.cameras_frames = [camera_center_frame, camera_left_frame, camera_right_frame]
+        
         self.lidar_frame = rospy.get_param('/t4ac/frames/lidar')
 
         ## Sensors
@@ -144,67 +215,50 @@ class RobesafeAgent(AutonomousAgent):
         # leftwards and z backwards (that is, the ORIENTATION of the sensor). BUT, in the configuration file you specify the final position
         # of your frame w.r.t. the origin (a camera would be z frontwards, x rightwards and y downwards)
 
+        self.camera_position = rospy.get_param('/t4ac/tf/base_link_to_camera_center_tf')
+        self.xcam_center, self.ycam_center, self.zcam_center = self.camera_position[:3]
+
+        self.camera_position = rospy.get_param('/t4ac/tf/base_link_to_camera_left_tf')
+        self.xcam_left, self.ycam_left, self.zcam_left = self.camera_position[:3]
+        self.yaw_left = (self.camera_position[5] + 1.57079632679) * (-90 / 1.5707963)
+
+        self.camera_position = rospy.get_param('/t4ac/tf/base_link_to_camera_right_tf')
+        self.xcam_right, self.ycam_right, self.zcam_right = self.camera_position[:3]
+        self.yaw_right = (self.camera_position[5] + 1.57079632679) * (-90 / 1.57079632679)
+
         self.lidar_position = rospy.get_param('/t4ac/tf/base_link_to_lidar_tf')
         self.xlidar, self.ylidar, self.zlidar = self.lidar_position[:3]
         self.gnss_position = rospy.get_param('/t4ac/tf/base_link_to_gnss_tf')
         self.xgnss, self.ygnss, self.zgnss = self.gnss_position[:3]
         
-        # camera_id = center, right, left, rear
-        cameras_id = ["center", "left", "right"]
-        self.cameras_parameters = []
-        for index, camera_id in enumerate(cameras_id):
-            """
-            camera_id = center, right, left, rear
-            """
-            width = 1920 # 2060, 1920
-            height = 1080 # 1080, 540
-            fov = 80 # 80, 60
-            fx = width / (2.0 * math.tan(fov * math.pi / 360.0))
-            # fy = height / (2.0 * math.tan(fov * math.pi / 360.0)) # TODO: Check this¿?¿?¿?
-            fy = width / (2.0 * math.tan(fov * math.pi / 360.0))
-            camera_position = rospy.get_param('/t4ac/tf/base_link_to_camera_' + str(camera_id) + '_tf')
-            camera_dict = dict({
-                                'id': camera_id,
-                                'width': width,
-                                'height': height,
-                                'fov': fov,
-                                'fx': fx,
-                                'fy': fy,
-                                'cx': width / 2,
-                                'cy': height / 2,
-                                'config_file': 'camera_parameters_' + str(width) + '_' + str(height) + '_' + str(fov) + '/',
-                                'image_raw_pub': rospy.Publisher('/t4ac/perception/sensors/' + camera_id + '/image_raw', Image, queue_size=100),
-                                'camera_info_pub': rospy.Publisher('/t4ac/perception/sensors/' + camera_id + '/camera_info', CameraInfo, queue_size=100),
-                                'camera_info_rect_pub': rospy.Publisher('/t4ac/perception/sensors/' + camera_id + '/rect/camera_info', CameraInfo, queue_size = 100),
-                                'image_rect_pub': rospy.Publisher('/t4ac/perception/sensors/' + camera_id + '/image_rect', Image, queue_size=100),
-                                'frame': rospy.get_param('/t4ac/frames/camera_' + str(camera_id)),
-                                'camera_position_3D': np.array([0, 0]).reshape(-1,2), # With respect to a common frame, that would represent the 0,0.
-                                                                                      # If set to 0,0, each camera is an independent frame and after
-                                                                                      # obtaining the 3D information they will have to transform to a
-                                                                                      # common frame (e.g. all cameras -> front_bumper_center -> map)
-                                'x': camera_position[0],
-                                'y': camera_position[1],
-                                'z': camera_position[2],
-                                'yaw': (camera_position[5] + 1.57079632679) * (-90 / 1.57079632679)
-            })
-            self.cameras_parameters.append(camera_dict)
-
         print("\033[1;31m"+"End init configuration: "+'\033[0;m')
 
     # Specify your sensors
 
     def sensors(self):
-        sensors = []
-        for index, camera in enumerate(self.cameras_parameters):
-            sensors.append({'type': 'sensor.camera.rgb', 'x': camera['x'], 'y': camera['y'], 'z': camera['z'], 
-                        'roll': 0.0, 'pitch': 0.0, 'yaw': camera['yaw'], 'width': camera['width'], 
-                        'height': camera['height'], 'fov': camera['fov'], 'id': camera['id']}) 
-                        
-        sensors.append({'type': 'sensor.lidar.ray_cast', 'x': self.xlidar, 'y': self.ylidar, 'z': self.zlidar, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'id': 'LiDAR'})
-        sensors.append({'type': 'sensor.other.gnss', 'x': self.xgnss, 'y': self.ygnss, 'z': self.zgnss, 'id': 'GNSS'})
-        sensors.append({'type': 'sensor.other.imu', 'x': self.xgnss, 'y': self.ygnss, 'z': self.zgnss, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'id': 'IMU'})
-        sensors.append({'type': 'sensor.opendrive_map', 'reading_frequency': 1, 'id': 'OpenDRIVE'})
-        sensors.append({'type': 'sensor.speedometer',  'reading_frequency': 20, 'id': 'Speed'})
+        sensors =  [
+                    {'type': 'sensor.camera.rgb', 'x': self.xcam_center, 'y': self.ycam_center, 'z': self.zcam_center, 
+                      'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,'width': 
+                      self.width_center, 'height': self.height_center, 'fov': self.fov_center, 'id': 'Camera_center'},
+
+                    # {'type': 'sensor.camera.rgb', 'x': self.xcam_left, 'y': self.ycam_left, 'z': self.zcam_left, 
+                    #   'roll': 0.0, 'pitch': 0.0, 'yaw': self.yaw_left,'width': 
+                    #   self.width_left, 'height': self.height_left, 'fov': self.fov_left, 'id': 'Camera_left'},
+
+                    # {'type': 'sensor.camera.rgb', 'x': self.xcam_right, 'y': self.ycam_right, 'z': self.zcam_right, 
+                    #   'roll': 0.0, 'pitch': 0.0, 'yaw': self.yaw_right,'width': 
+                    #   self.width_right, 'height': self.height_right, 'fov': self.fov_right, 'id': 'Camera_right'},
+
+                    # {'type': 'sensor.camera.rgb', 'x': self.xcam_rear, 'y': self.ycam_rear, 'z': self.zcam_rear, 
+                    #   'roll': 0.0, 'pitch': 0.0, 'yaw': 180.0,'width': 
+                    #   self.width, 'height': self.height, 'fov': self.fov, 'id': 'Camera_rear'},  
+
+                    {'type': 'sensor.lidar.ray_cast', 'x': self.xlidar, 'y': self.ylidar, 'z': self.zlidar, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'id': 'LiDAR'},
+                    {'type': 'sensor.other.gnss', 'x': self.xgnss, 'y': self.ygnss, 'z': self.zgnss, 'id': 'GNSS'},
+                    {'type': 'sensor.other.imu', 'x': self.xgnss, 'y': self.ygnss, 'z': self.zgnss, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'id': 'IMU'},
+                    {'type': 'sensor.opendrive_map', 'reading_frequency': 1, 'id': 'OpenDRIVE'},
+                    {'type': 'sensor.speedometer',  'reading_frequency': 20, 'id': 'Speed'},
+                   ]
                     
         return sensors
 
@@ -218,6 +272,17 @@ class RobesafeAgent(AutonomousAgent):
 
         # Get sensor data
 
+        actual_speed = (input_data['Speed'][1])['speed']
+        gnss = (input_data['GNSS'][1])
+        imu = (input_data['IMU'][1])
+
+        cameras = []
+        for key in input_data.keys():
+            if "Camera" in key:
+               cameras.append(input_data[key][1]) 
+ 
+        lidar = (input_data['LiDAR'][1])
+
         if self.trajectory_flag:
             hd_map = (input_data['OpenDRIVE'][1])
             distance_among_waypoints = 2
@@ -228,16 +293,6 @@ class RobesafeAgent(AutonomousAgent):
             self.route = self.LWP.calculate_waypoint_route_multiple(distance_among_waypoints, self._global_plan_world_coord, 1)
             self.trajectory_flag = False
 
-        actual_speed = (input_data['Speed'][1])['speed']
-        gnss = (input_data['GNSS'][1])
-        imu = (input_data['IMU'][1])
-
-        cameras = []
-        for camera in self.cameras_parameters:
-            cameras.append(input_data[camera['id']][1]) 
- 
-        lidar = (input_data['LiDAR'][1])
-
         # Publish until control has started   
 
         if actual_speed < 0.2:
@@ -247,6 +302,7 @@ class RobesafeAgent(AutonomousAgent):
 
         self.gnss_imu_callback(gnss, imu, current_ros_time)
         self.cameras_callback(cameras, current_ros_time)
+
         self.lidar_callback(lidar, current_ros_time) 
         control = self.control_callback(actual_speed)
 
@@ -282,53 +338,59 @@ class RobesafeAgent(AutonomousAgent):
             self.pub_lidar_pointcloud.publish(point_cloud_msg)
         else:
             self.half_cloud = lidar_string_to_array(lidar)
+        # return
 
     def cameras_callback(self, cameras, current_ros_time):
         """
         Return the information of the correspondin camera as a sensor_msgs.Image ROS message based on a string 
         that contains the camera information
         """
-        for index_camera, raw_image in enumerate(cameras):
+
+        for i, raw_image in enumerate(cameras):
             raw_image = cv2_to_imgmsg(raw_image, self.encoding)
             raw_image.header.stamp = current_ros_time
-            raw_image.header.frame_id = self.cameras_parameters[index_camera]['frame']
-            raw_image_K = build_camera_info(raw_image.width, raw_image.height, 
-                                               self.cameras_parameters[index_camera]['fx'],
-                                               self.cameras_parameters[index_camera]['fy'],
-                                               self.cameras_parameters[index_camera]['camera_position_3D'][0,0],
-                                               self.cameras_parameters[index_camera]['camera_position_3D'][0,1], 
-                                               current_ros_time, self.cameras_parameters[index_camera]['frame'],
-                                               distorted_image=True)
+            raw_image.header.frame_id = self.cameras_frames[i]
         
             # Rectify the image
 
             cv_image = self.bridge.imgmsg_to_cv2(raw_image, desired_encoding='passthrough')
 
             if self.calibrate_camera:
-                cv2.imwrite("/workspace/team_code/modules/camera_parameters/distorted_image_" + str(self.cameras_parameters[index_camera]['Id']) + ".png", cv_image)
+                cv2.imwrite("/workspace/team_code/modules/camera_parameters/distorted_image_" + str(self.cameras_id[i]) + ".png", cv_image)
 
-            camera_parameters = self.camera_parameters_path + self.cameras_parameters[index_camera]['config_file']
-            roi_rectified_image = image_rectification(cv_image, raw_image_K, camera_parameters)
-            
+            roi_rectified_image = image_rectification(cv_image, self.camera_parameters_path+self.config)
+
             roi_rectified_image = cv2_to_imgmsg(roi_rectified_image, self.encoding)
             roi_rectified_image.header.stamp = current_ros_time
-            roi_rectified_image.header.frame_id = self.cameras_parameters[index_camera]['frame']
-            
-            fov = self.cameras_parameters[index_camera]['fov']
-            roi_fx = roi_rectified_image.width / (2.0 * math.tan(fov * math.pi / 360.0))
-            # roi_fy = roi_rectified_image.height / (2.0 * math.tan(fov * math.pi / 360.0)) # TODO: Check this¿?¿?¿?
-            roi_fy = roi_rectified_image.width / (2.0 * math.tan(fov * math.pi / 360.0))
-            
-            rectified_image_info = build_camera_info(roi_rectified_image.width, roi_rectified_image.height, 
-                                                     roi_fx, roi_fy,
-                                                     self.cameras_parameters[index_camera]['camera_position_3D'][0,0],
-                                                     self.cameras_parameters[index_camera]['camera_position_3D'][0,1], 
-                                                     current_ros_time, self.cameras_parameters[index_camera]['frame'])
+            roi_rectified_image.header.frame_id = self.cameras_frames[i]
+            # rectified_image_info = build_camera_info_from_file(self.camera_frame, self.camera_parameters_path+self.config, 
+            #                                                    self.camera_position_3Dcenter[0,0], self.camera_position_3Dcenter[0,1], current_ros_time)
+            rectified_image_info = build_camera_info(roi_rectified_image.width, roi_rectified_image.height, self.f, 
+                                                    self.camera_position_3Dcenter[0,0], self.camera_position_3Dcenter[0,1], 
+                                                    current_ros_time, self.cameras_frames[i])
 
-            self.cameras_parameters[index_camera]['image_raw_pub'].publish(raw_image)
-            # self.cameras_parameters[index_camera]['camera_info_pub'](raw_image_info)
-            self.cameras_parameters[index_camera]['camera_info_rect_pub'].publish(rectified_image_info)
-            self.cameras_parameters[index_camera]['image_rect_pub'].publish(roi_rectified_image)
+
+            #  Publish information 
+            if (self.cameras_frames[i] == 'ego_vehicle/camera/rgb/center'):
+                self.pub_image_raw_center.publish(raw_image)
+                # self.pub_camera_info_center.publish(raw_image_info)
+                self.pub_image_rect_center.publish(roi_rectified_image)
+                self.pub_camera_info_rect_center.publish(rectified_image_info)
+            elif (self.cameras_frames[i] == 'ego_vehicle/camera/rgb/left'):
+                self.pub_image_raw_left.publish(raw_image)
+                # self.pub_camera_info_left.publish(raw_image_info)
+                self.pub_image_rect_left.publish(roi_rectified_image)
+                self.pub_camera_info_rect_left.publish(rectified_image_info)
+            elif (self.cameras_frames[i] == 'ego_vehicle/camera/rgb/right'):
+                self.pub_image_raw_right.publish(raw_image)
+                # self.pub_camera_info_right.publish(raw_image_info)
+                self.pub_image_rect_right.publish(roi_rectified_image)
+                self.pub_camera_info_rect_right.publish(rectified_image_info)
+            # elif (self.cameras_frames[i] == 'ego_vehicle/camera/rgb/rear'):
+            #     self.pub_image_raw_rear.publish(raw_image)
+            #     # self.pub_camera_info_rear.publish(raw_image_info)
+            #     self.pub_image_rect_rear.publish(roi_rectified_image)
+            #     self.pub_camera_info_rect_rear.publish(rectified_image_info)
 
     def gnss_imu_callback(self, gnss, imu, current_ros_time):
         """
@@ -362,7 +424,6 @@ class RobesafeAgent(AutonomousAgent):
         x = scale * gnss_msg.longitude * math.pi * EARTH_RADIUS_EQUA / 180.0 
         # Negative y to correspond to carla documentations
         y = - scale * EARTH_RADIUS_EQUA * math.log(math.tan((90.0 + gnss_msg.latitude) * math.pi / 360.0))  
-        
         #################################################################################################
         #####  It doesn't work with CARLA, they use an approximation to perform the conversion #######
         # import utm
@@ -434,6 +495,8 @@ class RobesafeAgent(AutonomousAgent):
         control.throttle = throttle
         control.brake = brake
         control.hand_brake = False
+
+        # print("Speed: ",self.speed_cmd, "  Steer: ", self.steer_cmd)
 
         return control
 

@@ -63,7 +63,7 @@ def cv2_to_imgmsg(cvim, encoding = "passthrough"):
 
     return img_msg
 
-def build_camera_info(width, height, f, x, y, current_ros_time, frame_id):
+def build_camera_info(width, height, f_x, f_y, x, y, current_ros_time, frame_id, distorted_image=None):
     """
     Private function to compute camera info
     camera info doesn't change over time
@@ -76,14 +76,18 @@ def build_camera_info(width, height, f, x, y, current_ros_time, frame_id):
     camera_info.distortion_model = 'plumb_bob'
     cx = camera_info.width / 2.0
     cy = camera_info.height / 2.0
-    fx = f
-    fy = fx
+    fx = f_x
+    fy = f_y
     camera_info.K = [fx, 0, cx, 0, fy, cy, 0, 0, 1]
-    camera_info.D = [0, 0, 0, 0, 0]
-    camera_info.R = [1.0, 0, 0, 0, 1.0, 0, 0, 0, 1.0]
-    camera_info.P = [fx, 0, cx, x, 0, fy, cy, y, 0, 0, 1.0, 0]
 
-    return camera_info 
+    if not distorted_image:
+        camera_info.D = [0, 0, 0, 0, 0]
+        camera_info.R = [1.0, 0, 0, 0, 1.0, 0, 0, 0, 1.0]
+        camera_info.P = [fx, 0, cx, x, 0, fy, cy, y, 0, 0, 1.0, 0]
+
+        return camera_info
+    else:
+        return np.array([camera_info.K]).reshape(3,3) # Only return intrinsic parameters
 
 def build_camera_info_from_file(frame, parameters_route, x_pos, y_pos, current_ros_time):
     """
@@ -122,14 +126,23 @@ def build_camera_info_from_file(frame, parameters_route, x_pos, y_pos, current_r
 
     return camera_info
 
-def image_rectification(distorted_image, camera_parameters_path='/workspace/team_code/modules/camera_parameters/'):
+def image_rectification(distorted_image, raw_image_K, camera_parameters_path='/workspace/team_code/modules/camera_parameters/'):
     """
     """
 
     K_distorted = np.loadtxt(camera_parameters_path+'K_original.txt') # Load your original K matrix
+    # K_distorted = raw_image_K
     D = np.loadtxt(camera_parameters_path+'D.txt') # Load the distortion coefficients of your original image
     roi = np.loadtxt(camera_parameters_path+'roi.txt').astype(np.int64) # Load ROI dimensions
+
+    # print("Prev roi: ", roi)
+    h_dist, w_dist = distorted_image.shape[:2]
+    # print("K distorted: ", K_distorted, type(K_distorted))
+    # newcameramtx, roi = cv2.getOptimalNewCameraMatrix(K_distorted, D, (w_dist,h_dist), 1, (w_dist,h_dist))
+    # print("New camera matrix: ", newcameramtx)
+    # print("new roi: ", roi)
     x,y,w,h = roi
+    # dst = cv2.undistort(distorted_image, K_distorted, D, None, newcameramtx) # Undistort
     dst = cv2.undistort(distorted_image, K_distorted, D, None) # Undistort
     dst = dst[y:y+h, x:x+w]
     return dst
