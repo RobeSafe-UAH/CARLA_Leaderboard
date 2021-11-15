@@ -150,7 +150,7 @@ class RobesafeAgent(AutonomousAgent):
         self.xgnss, self.ygnss, self.zgnss = self.gnss_position[:3]
         
         # camera_id = center, right, left, rear
-        cameras_id = ["center", "left", "right"]
+        cameras_id = ["center"]#, "left", "right"]
         self.cameras_parameters = []
         for index, camera_id in enumerate(cameras_id):
             """
@@ -160,8 +160,7 @@ class RobesafeAgent(AutonomousAgent):
             height = 1080 # 1080, 540
             fov = 80 # 80, 60
             fx = width / (2.0 * math.tan(fov * math.pi / 360.0))
-            # fy = height / (2.0 * math.tan(fov * math.pi / 360.0)) # TODO: Check this¿?¿?¿?
-            fy = width / (2.0 * math.tan(fov * math.pi / 360.0))
+            fy = fx 
             camera_position = rospy.get_param('/t4ac/tf/base_link_to_camera_' + str(camera_id) + '_tf')
             camera_dict = dict({
                                 'id': camera_id,
@@ -175,8 +174,8 @@ class RobesafeAgent(AutonomousAgent):
                                 'config_file': 'camera_parameters_' + str(width) + '_' + str(height) + '_' + str(fov) + '/',
                                 'image_raw_pub': rospy.Publisher('/t4ac/perception/sensors/' + camera_id + '/image_raw', Image, queue_size=100),
                                 'camera_info_pub': rospy.Publisher('/t4ac/perception/sensors/' + camera_id + '/camera_info', CameraInfo, queue_size=100),
-                                'camera_info_rect_pub': rospy.Publisher('/t4ac/perception/sensors/' + camera_id + '/rect/camera_info', CameraInfo, queue_size = 100),
                                 'image_rect_pub': rospy.Publisher('/t4ac/perception/sensors/' + camera_id + '/image_rect', Image, queue_size=100),
+                                'camera_info_rect_pub': rospy.Publisher('/t4ac/perception/sensors/' + camera_id + '/rect/camera_info', CameraInfo, queue_size = 100),
                                 'frame': rospy.get_param('/t4ac/frames/camera_' + str(camera_id)),
                                 'camera_position_3D': np.array([0, 0]).reshape(-1,2), # With respect to a common frame, that would represent the 0,0.
                                                                                       # If set to 0,0, each camera is an independent frame and after
@@ -305,10 +304,10 @@ class RobesafeAgent(AutonomousAgent):
             cv_image = self.bridge.imgmsg_to_cv2(raw_image, desired_encoding='passthrough')
 
             if self.calibrate_camera:
-                cv2.imwrite("/workspace/team_code/modules/camera_parameters/distorted_image_" + str(self.cameras_parameters[index_camera]['Id']) + ".png", cv_image)
+                cv2.imwrite("/workspace/team_code/modules/camera_parameters/distorted_image_" + str(self.cameras_parameters[index_camera]['id']) + ".png", cv_image)
 
-            camera_parameters = self.camera_parameters_path + self.cameras_parameters[index_camera]['config_file']
-            roi_rectified_image = image_rectification(cv_image, raw_image_K, camera_parameters)
+            camera_parameters_path = self.camera_parameters_path + self.cameras_parameters[index_camera]['config_file']
+            roi_rectified_image = image_rectification(cv_image, raw_image_K, camera_parameters_path)
             
             roi_rectified_image = cv2_to_imgmsg(roi_rectified_image, self.encoding)
             roi_rectified_image.header.stamp = current_ros_time
@@ -319,11 +318,17 @@ class RobesafeAgent(AutonomousAgent):
             # roi_fy = roi_rectified_image.height / (2.0 * math.tan(fov * math.pi / 360.0)) # TODO: Check this¿?¿?¿?
             roi_fy = roi_rectified_image.width / (2.0 * math.tan(fov * math.pi / 360.0))
             
-            rectified_image_info = build_camera_info(roi_rectified_image.width, roi_rectified_image.height, 
-                                                     roi_fx, roi_fy,
-                                                     self.cameras_parameters[index_camera]['camera_position_3D'][0,0],
-                                                     self.cameras_parameters[index_camera]['camera_position_3D'][0,1], 
-                                                     current_ros_time, self.cameras_parameters[index_camera]['frame'])
+            rectified_image_info = build_camera_info_from_file(self.cameras_parameters[index_camera]['frame'],
+                                                               self.cameras_parameters[index_camera]['camera_position_3D'][0,0],
+                                                               self.cameras_parameters[index_camera]['camera_position_3D'][0,1],
+                                                               current_ros_time,
+                                                               camera_parameters_path)
+            
+            # rectified_image_info = build_camera_info(roi_rectified_image.width, roi_rectified_image.height, 
+            #                                          roi_fx, roi_fy,
+            #                                          self.cameras_parameters[index_camera]['camera_position_3D'][0,0],
+            #                                          self.cameras_parameters[index_camera]['camera_position_3D'][0,1], 
+            #                                          current_ros_time, self.cameras_parameters[index_camera]['frame'])
 
             self.cameras_parameters[index_camera]['image_raw_pub'].publish(raw_image)
             # self.cameras_parameters[index_camera]['camera_info_pub'](raw_image_info)

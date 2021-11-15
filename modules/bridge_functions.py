@@ -89,7 +89,7 @@ def build_camera_info(width, height, f_x, f_y, x, y, current_ros_time, frame_id,
     else:
         return np.array([camera_info.K]).reshape(3,3) # Only return intrinsic parameters
 
-def build_camera_info_from_file(frame, parameters_route, x_pos, y_pos, current_ros_time):
+def build_camera_info_from_file(frame, x_pos, y_pos, current_ros_time, camera_parameters_path='/workspace/team_code/modules/camera_parameters/'):
     """
     Private function to compute camera info
     camera info doesn't change over time
@@ -98,7 +98,7 @@ def build_camera_info_from_file(frame, parameters_route, x_pos, y_pos, current_r
     x = x_pos
     y = y_pos
 
-    K = np.loadtxt(parameters_route+'K.txt')
+    K = np.loadtxt(camera_parameters_path+'K.txt')
     fx = K[0,0]
     fy = K[1,1]
     cx = K[0,2]
@@ -107,7 +107,7 @@ def build_camera_info_from_file(frame, parameters_route, x_pos, y_pos, current_r
     # print("x, y: ", x, y)
     # print("fx, fy, cx, cy: ", fx, fy, cx, cy)
 
-    roi = np.loadtxt(parameters_route+'roi.txt')
+    roi = np.loadtxt(camera_parameters_path+'roi.txt')
     xtl,ytl,width,height = roi
     width = int(width)
     height = int(height)
@@ -131,18 +131,13 @@ def image_rectification(distorted_image, raw_image_K, camera_parameters_path='/w
     """
 
     K_distorted = np.loadtxt(camera_parameters_path+'K_original.txt') # Load your original K matrix
-    # K_distorted = raw_image_K
     D = np.loadtxt(camera_parameters_path+'D.txt') # Load the distortion coefficients of your original image
     roi = np.loadtxt(camera_parameters_path+'roi.txt').astype(np.int64) # Load ROI dimensions
 
-    # print("Prev roi: ", roi)
     h_dist, w_dist = distorted_image.shape[:2]
-    # print("K distorted: ", K_distorted, type(K_distorted))
-    # newcameramtx, roi = cv2.getOptimalNewCameraMatrix(K_distorted, D, (w_dist,h_dist), 1, (w_dist,h_dist))
-    # print("New camera matrix: ", newcameramtx)
-    # print("new roi: ", roi)
+
     x,y,w,h = roi
-    # dst = cv2.undistort(distorted_image, K_distorted, D, None, newcameramtx) # Undistort
+
     dst = cv2.undistort(distorted_image, K_distorted, D, None) # Undistort
     dst = dst[y:y+h, x:x+w]
     return dst
