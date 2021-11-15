@@ -26,7 +26,7 @@ import rosgraph
 from nav_msgs.msg import Odometry
 from sensor_msgs.point_cloud2 import create_cloud
 from sensor_msgs.msg import Image, CameraInfo, NavSatFix, NavSatStatus, PointCloud2, PointField
-from t4ac_msgs.msg import CarControl
+from t4ac_msgs.msg import CarControl, Node
 from cv_bridge import CvBridge, CvBridgeError
 from std_msgs.msg import Float64, Float32, Header
 
@@ -40,6 +40,10 @@ import numpy as np
 from modules.geometric_functions import euler_to_quaternion
 from modules.bridge_functions import build_camera_info, build_camera_info_from_file, cv2_to_imgmsg, image_rectification, get_input_route_list, lidar_string_to_array
 from t4ac_global_planner_ros.src.lane_waypoint_planner import LaneWaypointPlanner
+from map_parser import signal_parser
+from map_parser.test import test_signal_parser
+from t4ac_map_monitor_ros.src.modules import markers_module, monitor_classes
+import visualization_msgs.msg
 
 ### Auxiliar functions
 
@@ -96,10 +100,14 @@ class RobesafeAgent(AutonomousAgent):
         self.pub_gnss_pose = rospy.Publisher('/t4ac/localization/gnss_pose', Odometry, queue_size=1)
         self.pub_gnss_fix = rospy.Publisher('/t4ac/localization/fix', NavSatFix, queue_size=1)
         self.pub_lidar_pointcloud = rospy.Publisher('/t4ac/perception/sensors/lidar', PointCloud2, queue_size=10)
+
+        self.pub_current_traffic_light = rospy.Publisher('/t4ac/mapping/current_traffic_light', Node, queue_size=10)
+        self.signals_visualizator_pub = rospy.Publisher('/t4ac/mapping/debug/signals', visualization_msgs.msg.Marker, queue_size = 10)
        
         # Subscribers
 
         self.sub_cmd_vel = rospy.Subscriber('/t4ac/control/cmd_vel', CarControl, self.read_cmd_vel_callback)
+        self.sub_pose_ekf = rospy.Subscriber('/t4ac/localization/pose', Odometry, self.read_pose_callback)
 
         ## Launch the architecture
 
@@ -188,6 +196,10 @@ class RobesafeAgent(AutonomousAgent):
             })
             self.cameras_parameters.append(camera_dict)
 
+         
+        self.traffic_signals = []
+        self.pose_ekf = Odometry()
+        self.yaw = 0
         print("\033[1;31m"+"End init configuration: "+'\033[0;m')
 
     # Specify your sensors
@@ -226,6 +238,19 @@ class RobesafeAgent(AutonomousAgent):
             rospy.set_param('/t4ac/map_parameters/map_name', self.map_name)
             self.route = self.LWP.calculate_waypoint_route_multiple(distance_among_waypoints, self._global_plan_world_coord, 1)
             self.trajectory_flag = False
+            self.traffic_signals = signal_parser.parse_signals(hd_map['opendrive'], 1)
+            nodes = []
+            for signal in self.traffic_signals:
+                # if signal['id'] == 369 or signal['id'] == 370 or signal['id'] == 371:
+                node = monitor_classes.Node3D()
+                node.x = signal['x']
+                node.y = -signal['y']
+                node.z = signal['z']
+                nodes.append(node)
+            signals_marker = markers_module.get_nodes(
+                nodes = nodes, rgb = [1,0,1], name = "2", marker_type = 8, 
+                scale = 1.5, extra_z = 1, lifetime = 0)
+            self.signals_visualizator_pub.publish(signals_marker)
 
         actual_speed = (input_data['Speed'][1])['speed']
         gnss = (input_data['GNSS'][1])
@@ -244,6 +269,7 @@ class RobesafeAgent(AutonomousAgent):
         
         # Callbacks
 
+        self.traffic_lights_callback()
         self.gnss_imu_callback(gnss, imu, current_ros_time)
         self.cameras_callback(cameras, current_ros_time)
         self.lidar_callback(lidar, current_ros_time) 
@@ -448,6 +474,49 @@ class RobesafeAgent(AutonomousAgent):
         """
         self.speed_cmd = cmd_vel.velocity
         self.steer_cmd = cmd_vel.steer
+
+    def read_pose_callback(self, data):
+        self.pose_ekf = data
+        
+    def traffic_lights_callback(self):
+        nearest_signals = []
+        distance_th = 40
+        affected_signal = None
+        vehicle_pose = np.array([self.pose_ekf.pose.pose.position.x, self.pose_ekf.pose.pose.position.y])
+        current_traffic_light = Node()
+        current_traffic_light.x = 50000
+        current_traffic_light.y = 50000 
+        current_traffic_light.z = 50000 
+        for i, signal in enumerate(self.traffic_signals):
+            
+            signal_pose = np.array([signal['x'], signal['y']])
+            dist = np.linalg.norm(vehicle_pose - signal_pose)
+
+            if (dist < distance_th):
+                # print("Dentro: ", dist)
+                nearest_signals.append(signal)
+                if (round(signal['yaw'], 4) >= round(2 * math.pi, 4)):
+                    signal['yaw'] -= 2 * math.pi
+                elif (round(signal['yaw'], 4) <= round(- 2 * math.pi, 4)):
+                    signal['yaw'] += 2 * math.pi
+                if abs(self.yaw - signal['yaw']) < 0.52:                    
+                    current_traffic_light.x = signal['x']
+                    current_traffic_light.y = -signal['y']
+                    current_traffic_light.z = signal['z']
+        self.pub_current_traffic_light.publish(current_traffic_light)
+            # else:
+            #     c = Node()
+            #     node.x = 50000
+            #     node.y = 50000
+            #     node.z = 50000
+            #     self.pub_current_traffic_light.publish(node)     
+
+        print(affected_signal)
+        # print(nearest_signals)
+        # print("Yaw_vehicle: ",self.yaw)
+        # print("Yaw_signal: ",nearest_signals['yaw'])
+
+        # print(self.pose_ekf.pose.pose.position.x)
 
     # Destroy the agent
 
