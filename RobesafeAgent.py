@@ -200,6 +200,8 @@ class RobesafeAgent(AutonomousAgent):
         self.traffic_signals = []
         self.pose_ekf = Odometry()
         self.ego_vehicle_yaw = 0
+        self.previous_dist_current_traffic_light = 50000
+        self.cont = 0
 
         print("\033[1;31m"+"End init configuration: "+'\033[0;m')
 
@@ -482,6 +484,7 @@ class RobesafeAgent(AutonomousAgent):
     def traffic_lights_callback(self, current_ros_time):
         nearest_signals = []
         distance_th = 40
+        consecutive_steps = 12
 
         vehicle_pose = np.array([self.pose_ekf.pose.pose.position.x, self.pose_ekf.pose.pose.position.y])
         current_traffic_light = Odometry()
@@ -505,26 +508,41 @@ class RobesafeAgent(AutonomousAgent):
                     signal['yaw'] += 2 * math.pi
 
                 diff_angle = abs(self.ego_vehicle_yaw - signal['yaw'])
+                # print('diff_angle: ', diff_angle)
+                
+                    
+                if (diff_angle < 0.52): # 0.52 radians = 30 º, to consider curves
+                    if (dist > self.previous_dist_current_traffic_light):
+                        self.cont += 1
+                        if self.cont > consecutive_steps:
+                            self.cont = consecutive_steps
+                    else:
+                        self.cont -= 1
+                        if self.cont < 0:
+                            self.cont = 0
+                    self.previous_dist_current_traffic_light = dist
+                    if (self.cont < consecutive_steps):
+                        # print('self.cont: ', self.cont)
+                        # print("Entro semaforo: ", signal['id'])                  
+                        current_traffic_light.pose.pose.position.x = signal['x']
+                        current_traffic_light.pose.pose.position.y = signal['y']
+                        current_traffic_light.pose.pose.position.z = signal['z']
 
-                if diff_angle< 0.52: # 0.52 radians = 30 º, to consider curves                  
-                    current_traffic_light.pose.pose.position.x = signal['x']
-                    current_traffic_light.pose.pose.position.y = signal['y']
-                    current_traffic_light.pose.pose.position.z = signal['z']
-
-                    node = monitor_classes.Node3D()
-                    node.x = current_traffic_light.pose.pose.position.x
-                    node.y = -current_traffic_light.pose.pose.position.y # -y since RVIZ representation is right-handed rule
-                    node.z = current_traffic_light.pose.pose.position.z
-                    nodes = []
-                    nodes.append(node)
-                    nodes.append(node)
-                    signals_marker = markers_module.get_nodes(
-                    nodes = nodes, rgb = [0,1,0], name = "current_traffic_light", marker_type = 8, 
-                    scale = 1.5, extra_z = 1, lifetime = 0.2)
-                    self.signals_visualizator_pub.publish(signals_marker)
+                        node = monitor_classes.Node3D()
+                        node.x = current_traffic_light.pose.pose.position.x
+                        node.y = -current_traffic_light.pose.pose.position.y # -y since RVIZ representation is right-handed rule
+                        node.z = current_traffic_light.pose.pose.position.z
+                        nodes = []
+                        nodes.append(node)
+                        nodes.append(node)
+                        signals_marker = markers_module.get_nodes(
+                        nodes = nodes, rgb = [0,1,0], name = "current_traffic_light", marker_type = 8, 
+                        scale = 1.5, extra_z = 1, lifetime = 0.2)
+                        self.signals_visualizator_pub.publish(signals_marker)
 
         # print("current traffic light: ", current_traffic_light)
         self.pub_current_traffic_light.publish(current_traffic_light)
+        # print(current_traffic_light.pose.pose.position.x, current_traffic_light.pose.pose.position.y)
 
     # Destroy the agent
 
