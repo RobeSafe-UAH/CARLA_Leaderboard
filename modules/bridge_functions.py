@@ -157,16 +157,6 @@ def get_routeNodes(route):
         nodes.append(node)
     return nodes
 
-def get_input_route_list(hdmap, input_route, distance_among_waypoints = 2):
-    print("hdmap: ", hdmap.keys())
-    LWP = LaneWaypointPlanner(hdmap['opendrive'],1)
-    route = LWP.calculate_waypoint_route_multiple(distance_among_waypoints, input_route, 1)
-    LWP.publish_waypoints(route)
-    routeNodes = get_routeNodes(route)
-
-    waypoints_marker = markers_module.get_nodes(
-        routeNodes, [0,0,1], "2", 8, 1.5, 1, 0)
-    return waypoints_marker
 
 
 
