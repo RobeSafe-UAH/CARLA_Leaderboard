@@ -38,7 +38,9 @@ import numpy as np
 # Custom functions imports
 
 from modules.geometric_functions import euler_to_quaternion
-from modules.bridge_functions import build_camera_info, build_camera_info_from_file, cv2_to_imgmsg, image_rectification, get_input_route_list, lidar_string_to_array
+from modules.bridge_functions import build_camera_info, build_camera_info_from_file, \
+                                     cv2_to_imgmsg, image_rectification, \
+                                     lidar_string_to_array, get_routeNodes
 from t4ac_global_planner_ros.src.lane_waypoint_planner import LaneWaypointPlanner
 from map_parser import signal_parser
 from map_parser.test import test_signal_parser
@@ -89,6 +91,9 @@ class RobesafeAgent(AutonomousAgent):
 
         self.trajectory_flag = True
 
+        ## Planning 
+        self.debug_planning_route_points = True
+
         ### Track
 
         self.track = Track.MAP
@@ -102,6 +107,8 @@ class RobesafeAgent(AutonomousAgent):
         self.pub_lidar_pointcloud = rospy.Publisher('/t4ac/perception/sensors/lidar', PointCloud2, queue_size=10)
 
         self.pub_current_traffic_light = rospy.Publisher('/t4ac/mapping/current_traffic_light', Odometry, queue_size=2)
+        self.pub_signals_visualizator_marker = rospy.Publisher('/t4ac/mapping/debug/signals', visualization_msgs.msg.Marker, queue_size = 10)
+        self.pub_planning_routes_marker = rospy.Publisher('/t4ac/planning/route_points_marker', visualization_msgs.msg.Marker, queue_size = 10)
         self.signals_visualizator_pub = rospy.Publisher('/t4ac/mapping/debug/signals', visualization_msgs.msg.Marker, queue_size = 10)
        
         # Subscribers
@@ -240,11 +247,15 @@ class RobesafeAgent(AutonomousAgent):
             self.map_name = self.LWP.map_name
             rospy.set_param('/t4ac/map_parameters/map_name', self.map_name)
             self.route = self.LWP.calculate_waypoint_route_multiple(distance_among_waypoints, self._global_plan_world_coord, 1)
+
+            if self.debug_planning_route_points:
+                routeNodes = get_routeNodes(self.route)
+                waypoints_marker = markers_module.get_nodes(routeNodes, [0,0,1], "2", 8, 0.5, 1, 0)
+                self.pub_planning_routes_marker.publish(waypoints_marker)
             self.trajectory_flag = False
             self.traffic_signals = signal_parser.parse_signals(hd_map['opendrive'], 1)
             nodes = []
             for signal in self.traffic_signals:
-                # if signal['id'] == 369 or signal['id'] == 370 or signal['id'] == 371:
                 node = monitor_classes.Node3D()
                 node.x = signal['x']
                 node.y = -signal['y']
@@ -253,7 +264,7 @@ class RobesafeAgent(AutonomousAgent):
             signals_marker = markers_module.get_nodes(
                 nodes = nodes, rgb = [1,0,1], name = "2", marker_type = 8, 
                 scale = 1.5, extra_z = 1, lifetime = 0)
-            self.signals_visualizator_pub.publish(signals_marker)
+            self.pub_signals_visualizator_marker.publish(signals_marker)
 
         actual_speed = (input_data['Speed'][1])['speed']
         gnss = (input_data['GNSS'][1])
@@ -352,12 +363,7 @@ class RobesafeAgent(AutonomousAgent):
                                                                current_ros_time,
                                                                camera_parameters_path)
             
-            # rectified_image_info = build_camera_info(roi_rectified_image.width, roi_rectified_image.height, 
-            #                                          roi_fx, roi_fy,
-            #                                          self.cameras_parameters[index_camera]['camera_position_3D'][0,0],
-            #                                          self.cameras_parameters[index_camera]['camera_position_3D'][0,1], 
-            #                                          current_ros_time, self.cameras_parameters[index_camera]['frame'])
-
+ 
             self.cameras_parameters[index_camera]['image_raw_pub'].publish(raw_image)
             # self.cameras_parameters[index_camera]['camera_info_pub'](raw_image_info)
             self.cameras_parameters[index_camera]['camera_info_rect_pub'].publish(rectified_image_info)
@@ -483,7 +489,7 @@ class RobesafeAgent(AutonomousAgent):
         
     def traffic_lights_callback(self, current_ros_time):
         nearest_signals = []
-        distance_th = 40
+        distance_th = 50
         consecutive_steps = 12
 
         vehicle_pose = np.array([self.pose_ekf.pose.pose.position.x, self.pose_ekf.pose.pose.position.y])
@@ -506,9 +512,11 @@ class RobesafeAgent(AutonomousAgent):
                     signal['yaw'] -= 2 * math.pi
                 elif (round(signal['yaw'], 4) <= round(- 2 * math.pi, 4)):
                     signal['yaw'] += 2 * math.pi
+                if (round(signal['yaw'], 4) < 0 ):
+                    signal['yaw'] += 2 * math.pi
 
-                diff_angle = abs(self.ego_vehicle_yaw - signal['yaw'])
-                # print('diff_angle: ', diff_angle)
+                # diff_angle = abs((self.ego_vehicle_yaw) - (signal['yaw']))
+                diff_angle = math.pi - abs(abs(self.ego_vehicle_yaw - signal['yaw']) - math.pi)
                 
                     
                 if (diff_angle < 0.52): # 0.52 radians = 30 º, to consider curves
@@ -517,9 +525,7 @@ class RobesafeAgent(AutonomousAgent):
                         if self.cont > consecutive_steps:
                             self.cont = consecutive_steps
                     else:
-                        self.cont -= 1
-                        if self.cont < 0:
-                            self.cont = 0
+                        self.cont = 0
                     self.previous_dist_current_traffic_light = dist
                     if (self.cont < consecutive_steps):
                         # print('self.cont: ', self.cont)
@@ -538,7 +544,7 @@ class RobesafeAgent(AutonomousAgent):
                         signals_marker = markers_module.get_nodes(
                         nodes = nodes, rgb = [0,1,0], name = "current_traffic_light", marker_type = 8, 
                         scale = 1.5, extra_z = 1, lifetime = 0.2)
-                        self.signals_visualizator_pub.publish(signals_marker)
+                        self.pub_signals_visualizator_marker.publish(signals_marker)
 
         # print("current traffic light: ", current_traffic_light)
         self.pub_current_traffic_light.publish(current_traffic_light)
