@@ -43,7 +43,6 @@ from modules.bridge_functions import build_camera_info, build_camera_info_from_f
                                      lidar_string_to_array, get_routeNodes
 from t4ac_global_planner_ros.src.lane_waypoint_planner import LaneWaypointPlanner
 from map_parser import signal_parser
-from map_parser.test import test_signal_parser
 from t4ac_map_monitor_ros.src.modules import markers_module, monitor_classes
 import visualization_msgs.msg
 
@@ -542,8 +541,8 @@ class RobesafeAgent(AutonomousAgent):
                         nodes.append(node)
                         nodes.append(node)
                         signals_marker = markers_module.get_nodes(
-                        nodes = nodes, rgb = [0,1,0], name = "current_traffic_light", marker_type = 8, 
-                        scale = 1.5, extra_z = 1, lifetime = 0.2)
+                            nodes = nodes, rgb = [0,1,0], name = "current_traffic_light", marker_type = 8, 
+                            scale = 1.5, extra_z = 1, lifetime = 0.2)
                         self.pub_signals_visualizator_marker.publish(signals_marker)
 
         # print("current traffic light: ", current_traffic_light)
