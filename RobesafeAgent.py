@@ -170,9 +170,9 @@ class RobesafeAgent(AutonomousAgent):
             """
             camera_id = center, right, left, rear
             """
-            width = 1920 # 2060, 1920
-            height = 1080 # 1080, 540
-            fov = 80 # 80, 60
+            width = 1080 # 2060, 1920, 1080
+            height = 540 # 1080, 540
+            fov = 60 # 80, 60
             fx = width / (2.0 * math.tan(fov * math.pi / 360.0))
             fy = fx 
             camera_position = rospy.get_param('/t4ac/tf/base_link_to_camera_' + str(camera_id) + '_tf')
@@ -207,7 +207,7 @@ class RobesafeAgent(AutonomousAgent):
         self.ego_vehicle_yaw = 0
         self.previous_dist_current_traffic_light = 50000
         self.cont = 0
-        self.cont_cam_callback = 0
+        self.cont_cam_callback = 2
 
         print("\033[1;31m"+"End init configuration: "+'\033[0;m')
 
