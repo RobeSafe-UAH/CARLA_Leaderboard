@@ -25,9 +25,9 @@ var18=$(pgrep "rqt_graph")
 var19=$(pgrep "sensor_f")
 var20=$(pgrep "t4ac")
 var21=$(pgrep "dbus")
-
+var22=$(pgrep "kdtree_based_cl")
 var="$var1 $var2 $var3 $var4 $var5 $var6 $var7 $var8 $var9 $var10 
-     $var11 $var12 $var13 $var14 $var15 $var16 $var17 $var18 $var19 $var20 $var21"
+     $var11 $var12 $var13 $var14 $var15 $var16 $var17 $var18 $var19 $var20 $var21 $var22"
 
 for i in $var;
 do
