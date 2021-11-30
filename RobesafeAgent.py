@@ -170,7 +170,7 @@ class RobesafeAgent(AutonomousAgent):
             """
             camera_id = center, right, left, rear
             """
-            width = 1080 # 2060, 1920, 1080
+            width = 1080 # 1920, 1080
             height = 540 # 1080, 540
             fov = 60 # 80, 60
             fx = width / (2.0 * math.tan(fov * math.pi / 360.0))
@@ -238,7 +238,7 @@ class RobesafeAgent(AutonomousAgent):
 
         # Get sensor data
 
-        if self.trajectory_flag:
+        if (self.trajectory_flag) and ("OpenDRIVE" in list(input_data.keys())):
             hd_map = (input_data['OpenDRIVE'][1])
             distance_among_waypoints = 1
             rospy.set_param('/t4ac/map_parameters/distance_among_waypoints', distance_among_waypoints)
@@ -251,7 +251,7 @@ class RobesafeAgent(AutonomousAgent):
                 routeNodes = get_routeNodes(self.route)
                 waypoints_marker = markers_module.get_nodes(routeNodes, [0,0,1], "2", 8, 0.5, 1, 0)
                 self.pub_planning_routes_marker.publish(waypoints_marker)
-            self.trajectory_flag = False
+            
             self.traffic_signals = signal_parser.parse_signals(hd_map['opendrive'], 1)
             nodes = []
             for signal in self.traffic_signals:
@@ -264,6 +264,7 @@ class RobesafeAgent(AutonomousAgent):
                 nodes = nodes, rgb = [1,0,1], name = "2", marker_type = 8, 
                 scale = 1.5, extra_z = 1, lifetime = 0)
             self.pub_signals_visualizator_marker.publish(signals_marker)
+            self.trajectory_flag = False
 
         actual_speed = (input_data['Speed'][1])['speed']
         gnss = (input_data['GNSS'][1])
@@ -280,13 +281,12 @@ class RobesafeAgent(AutonomousAgent):
         # Callbacks
 
         self.gnss_imu_callback(gnss, imu, current_ros_time)
-        self.cont_cam_callback += 1
-        if self.cont_cam_callback == 3:
-            cameras = []
-            for camera in self.cameras_parameters:
-                cameras.append(input_data[camera['id']][1]) 
-            self.cont_cam_callback = 0
-            self.cameras_callback(cameras, current_ros_time)
+
+        cameras = []
+        for camera in self.cameras_parameters:
+            cameras.append(input_data[camera['id']][1]) 
+        self.cameras_callback(cameras, current_ros_time)
+
         self.lidar_callback(lidar, current_ros_time)
         self.traffic_lights_callback(current_ros_time) 
         control = self.control_callback(actual_speed)
@@ -300,23 +300,10 @@ class RobesafeAgent(AutonomousAgent):
         Return the LiDAR pointcloud as a sensor_msgs.PointCloud2 ROS message based on a string that contains
         the LiDAR information
         """
-        # while not rospy.is_shutdown():
-        self.lidar_count += 1
-        # header = Header()
-        # header.stamp = current_ros_time
-        # header.frame_id = self.lidar_frame
-        # whole_cloud = False
-        # lidar_data = lidar_string_to_array(lidar,self.half_cloud,whole_cloud)
-        # fields = [  
-        #             PointField('x', 0, PointField.FLOAT32, 1),
-        #             PointField('y', 4, PointField.FLOAT32, 1),
-        #             PointField('z', 8, PointField.FLOAT32, 1),
-        #             PointField('intensity', 12, PointField.FLOAT32, 1),
-        #             ]
-        # point_cloud_msg = create_cloud(header, fields, lidar_data)
-        # self.pub_lidar_pointcloud.publish(point_cloud_msg)
 
-        if (self.lidar_count % 8 == 0):
+        self.lidar_count += 1
+
+        if (self.lidar_count % 2 == 0):
             self.lidar_count = 0
 
             header = Header()
@@ -349,7 +336,7 @@ class RobesafeAgent(AutonomousAgent):
             raw_image.header.frame_id = self.cameras_parameters[index_camera]['frame']    
             self.cameras_parameters[index_camera]['image_raw_pub'].publish(raw_image)
 
-    def rectified_ameras_callback(self, cameras, current_ros_time):
+    def rectified_cameras_callback(self, cameras, current_ros_time):
         """
         Return the information of the correspondin camera as a sensor_msgs.Image ROS message based on a string 
         that contains the camera information
@@ -369,7 +356,7 @@ class RobesafeAgent(AutonomousAgent):
         
             # Rectify the image
 
-            # cv_image = self.bridge.imgmsg_to_cv2(raw_image, desired_encoding='passthrough')
+            cv_image = self.bridge.imgmsg_to_cv2(raw_image, desired_encoding='passthrough')
 
             if self.calibrate_camera:
                 cv2.imwrite("/workspace/team_code/modules/camera_parameters/distorted_image_" + str(self.cameras_parameters[index_camera]['id']) + ".png", cv_image)
