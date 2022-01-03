@@ -13,22 +13,25 @@ from leaderboard.autoagents.autonomous_agent import AutonomousAgent, Track
 
 # General use
 
-import os
 import time
-import sys
 import cv2
+import sys
+import os
+import subprocess
 
 # ROS imports
 
 import rospy
 import roslaunch
 import rosgraph
+import tf
 from nav_msgs.msg import Odometry
 from sensor_msgs.point_cloud2 import create_cloud
 from sensor_msgs.msg import Image, CameraInfo, NavSatFix, NavSatStatus, PointCloud2, PointField
 from t4ac_msgs.msg import CarControl, Node
-from cv_bridge import CvBridge, CvBridgeError
-from std_msgs.msg import Float64, Float32, Header
+from cv_bridge import CvBridge
+from std_msgs.msg import Header
+import visualization_msgs.msg
 
 # Math and geometry imports
 
@@ -37,14 +40,18 @@ import numpy as np
 
 # Custom functions imports
 
-from modules.geometric_functions import euler_to_quaternion
-from modules.bridge_functions import build_camera_info, build_camera_info_from_file, \
+from generic_modules.geometric_functions import euler_to_quaternion
+from generic_modules.bridge_functions import build_camera_info, build_camera_info_from_file, \
                                      cv2_to_imgmsg, image_rectification, \
                                      lidar_string_to_array, get_routeNodes
 from t4ac_global_planner_ros.src.lane_waypoint_planner import LaneWaypointPlanner
 from map_parser import signal_parser
 from t4ac_map_monitor_ros.src.modules import markers_module, monitor_classes
-import visualization_msgs.msg
+sys.path.insert(0, '/workspace/team_code/catkin_ws/src/t4ac_unified_perception_layer/src/')
+from modules.monitors.monitors_functions import apply_tf
+sys.path.insert(0, '/workspace/team_code/catkin_ws/src/t4ac_config_layer/t4ac_utils_ros/src/')
+# from RobesafeAgent_ROS import publish_lidar, publish_localization, publish_cmd_vel
+from RobesafeAgent_ROS import RobesafeAgentROS
 
 ### Auxiliar functions
 
@@ -60,10 +67,10 @@ class RobesafeAgent(AutonomousAgent):
     def setup(self, path_to_conf_file):
         print("\033[1;31m"+"Start init configuration: "+'\033[0;m')
 
-         ### Layers variables
+        ### Layers variables
 
         self.time_sleep = 1
-
+        
         ## Perception
 
         # Cameras
@@ -71,12 +78,17 @@ class RobesafeAgent(AutonomousAgent):
         self.calibrate_camera = False
         self.encoding = "bgra8"
         self.bridge = CvBridge()
-        self.camera_parameters_path = '/workspace/team_code/modules/camera_parameters/'
+        self.camera_parameters_path = '/workspace/team_code/generic_modules/camera_parameters/camera_parameters_/'
 
         # LiDAR
 
         self.half_cloud = []
         self.lidar_count = 0
+
+        ## Localization
+
+        self.pose_ekf = Odometry()
+        self.ego_vehicle_yaw = 0
 
         ## Control
 
@@ -89,30 +101,35 @@ class RobesafeAgent(AutonomousAgent):
         ## Mapping
 
         self.trajectory_flag = True
+        self.traffic_signals = []
 
         ## Planning 
+
         self.debug_planning_route_points = True
 
         ### Track
 
         self.track = Track.MAP
 
-        ## ROS communications
+        ### ROS communications
 
-        # Publishers
+        ## Publishers
 
-        self.pub_gnss_pose = rospy.Publisher('/t4ac/localization/gnss_pose', Odometry, queue_size=1)
-        self.pub_gnss_fix = rospy.Publisher('/t4ac/localization/fix', NavSatFix, queue_size=1)
+        self.pub_gnss_pose = rospy.Publisher('/t4ac/localization/gnss_pose', Odometry, queue_size=1)#, latch=True)
+        self.pub_gnss_fix = rospy.Publisher('/t4ac/localization/fix', NavSatFix, queue_size=1)#, latch=True)
         self.pub_lidar_pointcloud = rospy.Publisher('/t4ac/perception/sensors/lidar', PointCloud2, queue_size=10)
 
-        self.pub_current_traffic_light = rospy.Publisher('/t4ac/mapping/current_traffic_light', Odometry, queue_size=2)
-        self.pub_signals_visualizator_marker = rospy.Publisher('/t4ac/mapping/debug/signals', visualization_msgs.msg.Marker, queue_size = 10)
-        self.pub_planning_routes_marker = rospy.Publisher('/t4ac/planning/route_points_marker', visualization_msgs.msg.Marker, queue_size = 10)
+        self.pub_current_traffic_light = rospy.Publisher('/t4ac/mapping/current_traffic_light', Odometry, queue_size=20, latch=True)
+        self.pub_signals_visualizator_marker = rospy.Publisher('/t4ac/mapping/debug/signals', visualization_msgs.msg.Marker, queue_size=10)
+        self.pub_planning_routes_marker = rospy.Publisher('/t4ac/planning/route_points_marker', visualization_msgs.msg.Marker, queue_size=10)
        
-        # Subscribers
+        ## Subscribers
 
-        self.sub_cmd_vel = rospy.Subscriber('/t4ac/control/cmd_vel', CarControl, self.read_cmd_vel_callback)
+        # self.sub_cmd_vel = rospy.Subscriber('/t4ac/control/cmd_vel', CarControl, self.read_cmd_vel_callback)
         self.sub_pose_ekf = rospy.Subscriber('/t4ac/localization/pose', Odometry, self.read_pose_callback)
+
+        flag_processed_data_topic = "/t4ac/perception/flag_processed_data"
+        self.sub_flag_processed_data = rospy.Subscriber(flag_processed_data_topic, Header, self.flag_processed_data_callback)
 
         ## Launch the architecture
 
@@ -120,10 +137,8 @@ class RobesafeAgent(AutonomousAgent):
         roslaunch.configure_logging(self.uuid)
 
         try:
-            print("\033[1;31m"+"Try roscore"+'\033[0;m')
             rosgraph.Master('/rostopic').getPid()
         except:
-            print("\033[1;31m"+"Except roscore"+'\033[0;m')
             launch = roslaunch.parent.ROSLaunchParent(self.uuid, roslaunch_files=[], is_core=True)
             launch.start()
 
@@ -133,17 +148,25 @@ class RobesafeAgent(AutonomousAgent):
         self.t4ac_architecture_launch.start()
         time.sleep(2)
 
+        self.RobesafeAgentROS = RobesafeAgentROS()
+
         rospy.loginfo("Techs4AgeCar architecture started")
 
         ## Init the node
 
-        rospy.init_node('robesafe_agent', anonymous=True)
+        rospy.init_node('robesafe_agent')#, anonymous=True, disable_signals=True)
 
         ## Frames
 
         self.map_frame = rospy.get_param('/t4ac/frames/map')
         self.base_link_frame = rospy.get_param('/t4ac/frames/base_link')
         self.lidar_frame = rospy.get_param('/t4ac/frames/lidar')
+
+        ## Transforms 
+
+        self.tf_lidar2map = np.zeros((4,4))
+
+        self.listener = tf.TransformListener()
 
         ## Sensors
 
@@ -162,34 +185,41 @@ class RobesafeAgent(AutonomousAgent):
         self.xlidar, self.ylidar, self.zlidar = self.lidar_position[:3]
         self.gnss_position = rospy.get_param('/t4ac/tf/base_link_to_gnss_tf')
         self.xgnss, self.ygnss, self.zgnss = self.gnss_position[:3]
-        
-        # camera_id = center, right, left, rear
-        cameras_id = ["center"]#, "left", "right"]
+
+        parameters = rospy.get_param_names()
+
+        cameras_id = []
+        parameters = rospy.get_param_names()
+        for parameter in parameters:
+            if "t4ac/sensors" in parameter and "camera" in parameter:
+                camera_id = parameter.split('/')[-1]
+                cameras_id.append(camera_id)
+
         self.cameras_parameters = []
-        for index, camera_id in enumerate(cameras_id):
+        for _, camera_id in enumerate(cameras_id):
             """
             camera_id = center, right, left, rear
+            camera_parameters = width, height, fov
             """
-            width = 1080 # 2060, 1920, 1080
-            height = 540 # 1080, 540
-            fov = 60 # 80, 60
-            fx = width / (2.0 * math.tan(fov * math.pi / 360.0))
-            fy = fx 
-            camera_position = rospy.get_param('/t4ac/tf/base_link_to_camera_' + str(camera_id) + '_tf')
+
+            camera_parameters = rospy.get_param('/t4ac/sensors/camera/' + str(camera_id)) # width, height, fov
+            camera_position = rospy.get_param('/t4ac/tf/base_link_to_camera_' + str(camera_id) + '_tf') # x,y,z,roll,pitch,yaw
+            camera_parameters_path = self.camera_parameters_path + str(camera_parameters[0]) + '_' + str(camera_parameters[1]) + '_' + str(camera_parameters[2]) + '/'
+
             camera_dict = dict({
                                 'id': camera_id,
-                                'width': width,
-                                'height': height,
-                                'fov': fov,
-                                'fx': fx,
-                                'fy': fy,
-                                'cx': width / 2,
-                                'cy': height / 2,
-                                'config_file': 'camera_parameters_' + str(width) + '_' + str(height) + '_' + str(fov) + '/',
-                                'image_raw_pub': rospy.Publisher('/t4ac/perception/sensors/' + camera_id + '/image_raw', Image, queue_size=100),
-                                'camera_info_pub': rospy.Publisher('/t4ac/perception/sensors/' + camera_id + '/camera_info', CameraInfo, queue_size=100),
-                                # 'image_rect_pub': rospy.Publisher('/t4ac/perception/sensors/' + camera_id + '/image_rect', Image, queue_size=100),
-                                # 'camera_info_rect_pub': rospy.Publisher('/t4ac/perception/sensors/' + camera_id + '/rect/camera_info', CameraInfo, queue_size = 100),
+                                'width': camera_parameters[0],
+                                'height': camera_parameters[1],
+                                'fov': camera_parameters[2],
+                                'fx': camera_parameters[0] / (2.0 * math.tan(camera_parameters[2] * math.pi / 360.0)),
+                                'fy': camera_parameters[0] / (2.0 * math.tan(camera_parameters[2] * math.pi / 360.0)), # fx = fy
+                                'cx': camera_parameters[0] / 2,
+                                'cy': camera_parameters[1] / 2,
+                                'camera_parameters_path': camera_parameters_path,
+                                'image_raw_pub': rospy.Publisher('/t4ac/perception/sensors/camera/' + camera_id + '/image_raw', Image, queue_size=20, latch=True), # 100
+                                'camera_info_pub': rospy.Publisher('/t4ac/perception/sensors/camera/' + camera_id + '/camera_info', CameraInfo, queue_size=20, latch=True), # 100
+                                # 'image_rect_pub': rospy.Publisher('/t4ac/perception/sensors/camera/' + camera_id + '/image_rect', Image, queue_size=20), # 100
+                                # 'camera_info_rect_pub': rospy.Publisher('/t4ac/perception/sensors/camera/' + camera_id + '/rect/camera_info', CameraInfo, queue_size=20), # 100
                                 'frame': rospy.get_param('/t4ac/frames/camera_' + str(camera_id)),
                                 'camera_position_3D': np.array([0, 0]).reshape(-1,2), # With respect to a common frame, that would represent the 0,0.
                                                                                       # If set to 0,0, each camera is an independent frame and after
@@ -201,13 +231,13 @@ class RobesafeAgent(AutonomousAgent):
                                 'yaw': (camera_position[5] + 1.57079632679) * (-90 / 1.57079632679)
             })
             self.cameras_parameters.append(camera_dict)
-         
-        self.traffic_signals = []
-        self.pose_ekf = Odometry()
-        self.ego_vehicle_yaw = 0
-        self.previous_dist_current_traffic_light = 50000
-        self.cont = 0
-        self.cont_cam_callback = 2
+        
+        self.previous_simulation_iteration_stamp = rospy.Time.now()
+        time.sleep(1)
+        self.current_simulation_iteration_stamp = rospy.Time.now() # Current simulation iteration stamp must be 
+                                                                   # higher to previous simulation iteration
+                                                                   # to run step
+        rospy.set_param("/t4ac/perception/flag_processed_data", flag_processed_data_topic)
 
         print("\033[1;31m"+"End init configuration: "+'\033[0;m')
 
@@ -215,11 +245,12 @@ class RobesafeAgent(AutonomousAgent):
 
     def sensors(self):
         sensors = []
-        for index, camera in enumerate(self.cameras_parameters):
+
+        for _, camera in enumerate(self.cameras_parameters):
             sensors.append({'type': 'sensor.camera.rgb', 'x': camera['x'], 'y': camera['y'], 'z': camera['z'], 
-                        'roll': 0.0, 'pitch': 0.0, 'yaw': camera['yaw'], 'width': camera['width'], 
-                        'height': camera['height'], 'fov': camera['fov'], 'id': camera['id']}) 
-                        
+                            'roll': 0.0, 'pitch': 0.0, 'yaw': camera['yaw'], 'width': camera['width'], 
+                            'height': camera['height'], 'fov': camera['fov'], 'id': camera['id']}) 
+
         sensors.append({'type': 'sensor.lidar.ray_cast', 'x': self.xlidar, 'y': self.ylidar, 'z': self.zlidar, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'id': 'LiDAR'})
         sensors.append({'type': 'sensor.other.gnss', 'x': self.xgnss, 'y': self.ygnss, 'z': self.zgnss, 'id': 'GNSS'})
         sensors.append({'type': 'sensor.other.imu', 'x': self.xgnss, 'y': self.ygnss, 'z': self.zgnss, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'id': 'IMU'})
@@ -236,12 +267,15 @@ class RobesafeAgent(AutonomousAgent):
         """
         current_ros_time = rospy.Time.now()
 
+        while (self.current_simulation_iteration_stamp <= self.previous_simulation_iteration_stamp):
+            continue
+        self.previous_simulation_iteration_stamp = self.current_simulation_iteration_stamp
+
         # Get sensor data
 
-        if self.trajectory_flag:
+        if (self.trajectory_flag) and ("OpenDRIVE" in list(input_data.keys())):
             hd_map = (input_data['OpenDRIVE'][1])
-            distance_among_waypoints = 1
-            rospy.set_param('/t4ac/map_parameters/distance_among_waypoints', distance_among_waypoints)
+            distance_among_waypoints = rospy.get_param('/t4ac/map_parameters/distance_among_waypoints')
             self.LWP = LaneWaypointPlanner(hd_map['opendrive'],1)
             self.map_name = self.LWP.map_name
             rospy.set_param('/t4ac/map_parameters/map_name', self.map_name)
@@ -251,7 +285,7 @@ class RobesafeAgent(AutonomousAgent):
                 routeNodes = get_routeNodes(self.route)
                 waypoints_marker = markers_module.get_nodes(routeNodes, [0,0,1], "2", 8, 0.5, 1, 0)
                 self.pub_planning_routes_marker.publish(waypoints_marker)
-            self.trajectory_flag = False
+            
             self.traffic_signals = signal_parser.parse_signals(hd_map['opendrive'], 1)
             nodes = []
             for signal in self.traffic_signals:
@@ -264,29 +298,28 @@ class RobesafeAgent(AutonomousAgent):
                 nodes = nodes, rgb = [1,0,1], name = "2", marker_type = 8, 
                 scale = 1.5, extra_z = 1, lifetime = 0)
             self.pub_signals_visualizator_marker.publish(signals_marker)
+            self.trajectory_flag = False
 
         actual_speed = (input_data['Speed'][1])['speed']
         gnss = (input_data['GNSS'][1])
         imu = (input_data['IMU'][1])
-
- 
         lidar = (input_data['LiDAR'][1])
 
         # Publish until control has started   
 
-        if actual_speed < 0.2:
+        if actual_speed < 0.2: # TODO: Improve this. Publish until the corresponding subscribers have
+            # subscribe, not hardcoding a minimum speed
             self.LWP.publish_waypoints(self.route)
-        
+
         # Callbacks
 
         self.gnss_imu_callback(gnss, imu, current_ros_time)
-        self.cont_cam_callback += 1
-        if self.cont_cam_callback == 3:
-            cameras = []
-            for camera in self.cameras_parameters:
-                cameras.append(input_data[camera['id']][1]) 
-            self.cont_cam_callback = 0
-            self.cameras_callback(cameras, current_ros_time)
+
+        cameras = []
+        for camera in self.cameras_parameters:
+            cameras.append(input_data[camera['id']][1]) 
+        self.cameras_callback(cameras, current_ros_time)
+
         self.lidar_callback(lidar, current_ros_time)
         self.traffic_lights_callback(current_ros_time) 
         control = self.control_callback(actual_speed)
@@ -295,28 +328,21 @@ class RobesafeAgent(AutonomousAgent):
 
     # Callbacks
 
+    def flag_processed_data_callback(self, flag_processed_data_msg):
+        """
+        """
+
+        self.current_simulation_iteration_stamp = flag_processed_data_msg.stamp
+
     def lidar_callback(self, lidar, current_ros_time):
         """
         Return the LiDAR pointcloud as a sensor_msgs.PointCloud2 ROS message based on a string that contains
         the LiDAR information
         """
-        # while not rospy.is_shutdown():
-        self.lidar_count += 1
-        # header = Header()
-        # header.stamp = current_ros_time
-        # header.frame_id = self.lidar_frame
-        # whole_cloud = False
-        # lidar_data = lidar_string_to_array(lidar,self.half_cloud,whole_cloud)
-        # fields = [  
-        #             PointField('x', 0, PointField.FLOAT32, 1),
-        #             PointField('y', 4, PointField.FLOAT32, 1),
-        #             PointField('z', 8, PointField.FLOAT32, 1),
-        #             PointField('intensity', 12, PointField.FLOAT32, 1),
-        #             ]
-        # point_cloud_msg = create_cloud(header, fields, lidar_data)
-        # self.pub_lidar_pointcloud.publish(point_cloud_msg)
 
-        if (self.lidar_count % 8 == 0):
+        self.lidar_count += 1
+
+        if (self.lidar_count % 2 == 0):
             self.lidar_count = 0
 
             header = Header()
@@ -334,7 +360,8 @@ class RobesafeAgent(AutonomousAgent):
                         PointField('intensity', 12, PointField.FLOAT32, 1),
                         ]
             point_cloud_msg = create_cloud(header, fields, lidar_data)
-            self.pub_lidar_pointcloud.publish(point_cloud_msg)
+            # self.pub_lidar_pointcloud.publish(point_cloud_msg)
+            self.RobesafeAgentROS.publish_lidar(point_cloud_msg)
         else:
             self.half_cloud = lidar_string_to_array(lidar)
     
@@ -349,16 +376,13 @@ class RobesafeAgent(AutonomousAgent):
             raw_image.header.frame_id = self.cameras_parameters[index_camera]['frame']    
             self.cameras_parameters[index_camera]['image_raw_pub'].publish(raw_image)
 
-    def rectified_ameras_callback(self, cameras, current_ros_time):
+    def rectified_cameras_callback(self, cameras, current_ros_time):
         """
         Return the information of the correspondin camera as a sensor_msgs.Image ROS message based on a string 
         that contains the camera information
         """
         start = time.time()
         for index_camera, raw_image in enumerate(cameras):
-            # raw_image = cv2_to_imgmsg(raw_image, self.encoding) # to publish as ROS topic
-            # raw_image.header.stamp = current_ros_time
-            # raw_image.header.frame_id = self.cameras_parameters[index_camera]['frame']
             raw_image_K = build_camera_info(raw_image.shape[1], raw_image.shape[0], 
                                             self.cameras_parameters[index_camera]['fx'],
                                             self.cameras_parameters[index_camera]['fy'],
@@ -369,12 +393,12 @@ class RobesafeAgent(AutonomousAgent):
         
             # Rectify the image
 
-            # cv_image = self.bridge.imgmsg_to_cv2(raw_image, desired_encoding='passthrough')
+            cv_image = self.bridge.imgmsg_to_cv2(raw_image, desired_encoding='passthrough')
 
             if self.calibrate_camera:
-                cv2.imwrite("/workspace/team_code/modules/camera_parameters/distorted_image_" + str(self.cameras_parameters[index_camera]['id']) + ".png", cv_image)
+                cv2.imwrite("/workspace/team_code/generic_modules/camera_parameters/distorted_image_" + str(self.cameras_parameters[index_camera]['id']) + ".png", cv_image)
 
-            camera_parameters_path = self.camera_parameters_path + self.cameras_parameters[index_camera]['config_file']
+            camera_parameters_path = self.cameras_parameters[index_camera]['camera_parameters_path']
             start_rect = time.time()
             roi_rectified_image = image_rectification(raw_image, raw_image_K, camera_parameters_path)
             end_rect = time.time()
@@ -394,11 +418,15 @@ class RobesafeAgent(AutonomousAgent):
                                                                self.cameras_parameters[index_camera]['camera_position_3D'][0,1],
                                                                current_ros_time,
                                                                camera_parameters_path)
+
+            raw_image = cv2_to_imgmsg(raw_image, self.encoding) # to publish as ROS topic
+            raw_image.header.stamp = current_ros_time
+            raw_image.header.frame_id = self.cameras_parameters[index_camera]['frame']
             
-            # self.cameras_parameters[index_camera]['image_raw_pub'].publish(raw_image)
-            # self.cameras_parameters[index_camera]['camera_info_pub'](raw_image_info)
-            self.cameras_parameters[index_camera]['camera_info_rect_pub'].publish(rectified_image_info)
+            self.cameras_parameters[index_camera]['image_raw_pub'].publish(raw_image)
+            # self.cameras_parameters[index_camera]['camera_info_pub'](raw_image_info) # TODO: Calculate the rectification matrix based on the distortion coefficients
             self.cameras_parameters[index_camera]['image_rect_pub'].publish(roi_rectified_image)
+            self.cameras_parameters[index_camera]['camera_info_rect_pub'].publish(rectified_image_info)
         end = time.time()
 
     def gnss_imu_callback(self, gnss, imu, current_ros_time):
@@ -469,13 +497,19 @@ class RobesafeAgent(AutonomousAgent):
         gnns_error = 1.5
         gnss_pose_msg.pose.covariance = np.diag([gnns_error, gnns_error, gnns_error, 0, 0, 0]).ravel()
 
-        self.pub_gnss_pose.publish(gnss_pose_msg)
+        # self.pub_gnss_pose.publish(gnss_pose_msg)
+        self.RobesafeAgentROS.publish_localization(gnss_pose_msg)
+
  
     def control_callback(self, actual_speed):
         """
         Return the current state of the vehicle regarding the control layer
         """
+        # error_speed = self.speed_cmd - actual_speed  # distance away from setpoint [m/s]
+
+        self.speed_cmd, self.steer_cmd = self.RobesafeAgentROS.publish_cmd_vel()
         error_speed = self.speed_cmd - actual_speed  # distance away from setpoint [m/s]
+
         self.error_sum += (error_speed*self.Ki)
 
         if (self.error_sum > 0.5):
@@ -517,12 +551,28 @@ class RobesafeAgent(AutonomousAgent):
         self.steer_cmd = cmd_vel.steer
 
     def read_pose_callback(self, data):
+        """
+        """
         self.pose_ekf = data
         
     def traffic_lights_callback(self, current_ros_time):
+        """
+        """
+
+        # Map to LiDAR
+
+        try:                                                         # Target        # Source
+            (translation,quaternion) = self.listener.lookupTransform(self.lidar_frame, self.map_frame, rospy.Time(0)) 
+            # rospy.Time(0) get us the latest available transform
+            rot_matrix = tf.transformations.quaternion_matrix(quaternion)
+            
+            self.tf_lidar2map = rot_matrix
+            self.tf_lidar2map[:3,3] = self.tf_lidar2map[:3,3] + translation # This matrix transforms local to global coordinates
+        except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+            print("\033[1;33m"+"TF LiDAR2Map exception"+'\033[0;m')
+
         nearest_signals = []
         distance_th = 50
-        consecutive_steps = 12
         publish_topics = False
 
         vehicle_pose = np.array([self.pose_ekf.pose.pose.position.x, self.pose_ekf.pose.pose.position.y])
@@ -536,7 +586,6 @@ class RobesafeAgent(AutonomousAgent):
         nearest_distance = 1000 
 
         for i, signal in enumerate(self.traffic_signals):
-            
             signal_pose = np.array([signal['x'], signal['y']])
             dist = np.linalg.norm(vehicle_pose - signal_pose)
         
@@ -553,11 +602,21 @@ class RobesafeAgent(AutonomousAgent):
                 diff_angle = math.pi - abs(abs(self.ego_vehicle_yaw - signal['yaw']) - math.pi)
                 
                 if (diff_angle < 0.52) and (dist < nearest_distance): # 0.52 radians = 30 º, to consider curves
-                    nearest_distance = dist           
-                    current_traffic_light.pose.pose.position.x = signal['x']
-                    current_traffic_light.pose.pose.position.y = signal['y']
-                    current_traffic_light.pose.pose.position.z = signal['z']
-                    publish_topics = True
+                    # Transform to local coordinates to check if the traffic light is in front of the ego-vehicle
+
+                    if np.any(self.tf_lidar2map):
+                        global_point = Node()
+                        global_point.x = signal['x']
+                        global_point.y = signal['y']
+                        global_point.z = signal['z']
+                        local_point = apply_tf(global_point, self.tf_lidar2map)
+
+                        if local_point.x > 0:
+                            nearest_distance = dist           
+                            current_traffic_light.pose.pose.position.x = signal['x']
+                            current_traffic_light.pose.pose.position.y = signal['y']
+                            current_traffic_light.pose.pose.position.z = signal['z']
+                            publish_topics = True
 
         if publish_topics:
             node = monitor_classes.Node3D()
@@ -569,7 +628,7 @@ class RobesafeAgent(AutonomousAgent):
             nodes.append(node)
             signals_marker = markers_module.get_nodes(
                 nodes = nodes, rgb = [0,1,0], name = "current_traffic_light", marker_type = 8, 
-                scale = 1.5, extra_z = 1, lifetime = 0.2)
+                scale = 1.5, extra_z = 1, lifetime = 1)
             self.pub_signals_visualizator_marker.publish(signals_marker)
         self.pub_current_traffic_light.publish(current_traffic_light)
 
