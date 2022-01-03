@@ -5,8 +5,7 @@ import utm
 
 sys.path.insert(0, '/workspace/team_code/catkin_ws/src/t4ac_planning_layer/')
 sys.path.insert(0, '/workspace/team_code/catkin_ws/src/t4ac_mapping_layer/')
-from t4ac_global_planner_ros.src.lane_waypoint_planner import LaneWaypointPlanner
-from t4ac_map_monitor_ros.src.modules import markers_module, monitor_classes
+from t4ac_map_monitor_ros.src.modules import monitor_classes
 from sensor_msgs.msg import PointCloud2, PointField, Image, CameraInfo
 
 def lidar_string_to_array(lidar, half_cloud=None, whole_cloud=None):
@@ -89,7 +88,7 @@ def build_camera_info(width, height, f_x, f_y, x, y, current_ros_time, frame_id,
     else:
         return np.array([camera_info.K]).reshape(3,3) # Only return intrinsic parameters
 
-def build_camera_info_from_file(frame, x_pos, y_pos, current_ros_time, camera_parameters_path='/workspace/team_code/modules/camera_parameters/'):
+def build_camera_info_from_file(frame, x_pos, y_pos, current_ros_time, camera_parameters_path='/workspace/team_code/generic_modules/camera_parameters/'):
     """
     Private function to compute camera info
     camera info doesn't change over time
@@ -126,7 +125,7 @@ def build_camera_info_from_file(frame, x_pos, y_pos, current_ros_time, camera_pa
 
     return camera_info
 
-def image_rectification(distorted_image, raw_image_K, camera_parameters_path='/workspace/team_code/modules/camera_parameters/'):
+def image_rectification(distorted_image, camera_parameters_path='/workspace/team_code/generic_modules/camera_parameters/'):
     """
     """
 
