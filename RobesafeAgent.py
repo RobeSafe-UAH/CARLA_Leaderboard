@@ -25,12 +25,13 @@ import rospy
 import roslaunch
 import rosgraph
 import tf
+import geometry_msgs
 from nav_msgs.msg import Odometry
 from sensor_msgs.point_cloud2 import create_cloud
 from sensor_msgs.msg import Image, CameraInfo, NavSatFix, NavSatStatus, PointCloud2, PointField
-from t4ac_msgs.msg import CarControl, Node
+from t4ac_msgs.msg import Node, RegulatoryElement, RegulatoryElementList, MonitorizedLanes
 from cv_bridge import CvBridge
-from std_msgs.msg import Header
+from std_msgs.msg import Header, String
 import visualization_msgs.msg
 
 # Math and geometry imports
@@ -48,7 +49,7 @@ from t4ac_global_planner_ros.src.lane_waypoint_planner import LaneWaypointPlanne
 from map_parser import signal_parser
 from t4ac_map_monitor_ros.src.modules import markers_module, monitor_classes
 sys.path.insert(0, '/workspace/team_code/catkin_ws/src/t4ac_unified_perception_layer/src/')
-from modules.monitors.monitors_functions import apply_tf
+from modules.monitors.monitors_functions import apply_tf, inside_lane, calculate_distance_to_nearest_object_inside_route
 sys.path.insert(0, '/workspace/team_code/catkin_ws/src/t4ac_config_layer/t4ac_utils_ros/src/')
 # from RobesafeAgent_ROS import publish_lidar, publish_localization, publish_cmd_vel
 from RobesafeAgent_ROS import RobesafeAgentROS
@@ -101,7 +102,6 @@ class RobesafeAgent(AutonomousAgent):
         ## Mapping
 
         self.trajectory_flag = True
-        self.traffic_signals = []
 
         ## Planning 
 
@@ -115,14 +115,15 @@ class RobesafeAgent(AutonomousAgent):
 
         ## Publishers
 
+        self.pub_hdmap = rospy.Publisher('/t4ac/mapping/opendrive_data', String, queue_size=1, latch=True)
         self.pub_gnss_pose = rospy.Publisher('/t4ac/localization/gnss_pose', Odometry, queue_size=1)#, latch=True)
         self.pub_gnss_fix = rospy.Publisher('/t4ac/localization/fix', NavSatFix, queue_size=1)#, latch=True)
         self.pub_lidar_pointcloud = rospy.Publisher('/t4ac/perception/sensors/lidar', PointCloud2, queue_size=10)
 
-        self.pub_current_traffic_light = rospy.Publisher('/t4ac/mapping/current_traffic_light', Odometry, queue_size=20, latch=True)
-        self.pub_signals_visualizator_marker = rospy.Publisher('/t4ac/mapping/debug/signals', visualization_msgs.msg.Marker, queue_size=10)
+        self.pub_regulatory_elements = rospy.Publisher('/t4ac/mapping/map_monitor/regulatory_elements', RegulatoryElementList, queue_size=10, latch=True)
         self.pub_planning_routes_marker = rospy.Publisher('/t4ac/planning/route_points_marker', visualization_msgs.msg.Marker, queue_size=10)
-       
+        self.pub_route_goal = rospy.Publisher('/t4ac/planning/goal',geometry_msgs.msg.PoseStamped, queue_size=10,latch=True)
+        
         ## Subscribers
 
         # self.sub_cmd_vel = rospy.Subscriber('/t4ac/control/cmd_vel', CarControl, self.read_cmd_vel_callback)
@@ -165,6 +166,14 @@ class RobesafeAgent(AutonomousAgent):
         ## Transforms 
 
         self.tf_lidar2map = np.zeros((4,4))
+
+        # Local position of front bumper center frame with respect to base_link frame (Local point)
+
+        self.base_link_to_front_bumper_center_tf = rospy.get_param('/t4ac/tf/base_link_to_front_bumper_center_tf')
+        self.front_bumper_center_local_position = Node(self.base_link_to_front_bumper_center_tf[0],
+                                                       self.base_link_to_front_bumper_center_tf[1],
+                                                       self.base_link_to_front_bumper_center_tf[2])
+        self.front_bumper_center_global_position = Node(50000,50000,50000)
 
         self.listener = tf.TransformListener()
 
@@ -276,28 +285,61 @@ class RobesafeAgent(AutonomousAgent):
         if (self.trajectory_flag) and ("OpenDRIVE" in list(input_data.keys())):
             hd_map = (input_data['OpenDRIVE'][1])
             distance_among_waypoints = rospy.get_param('/t4ac/map_parameters/distance_among_waypoints')
+            rospy.set_param('/t4ac/map_parameters/map_data', hd_map['opendrive'])
             self.LWP = LaneWaypointPlanner(hd_map['opendrive'],1)
             self.map_name = self.LWP.map_name
             rospy.set_param('/t4ac/map_parameters/map_name', self.map_name)
             self.route = self.LWP.calculate_waypoint_route_multiple(distance_among_waypoints, self._global_plan_world_coord, 1)
+            
+            # Every element of self._global_plan_world_coord is a tuple with the corresponding wp in global coordinates
+            # and a flag to indicate if lane change is required
+            last_wp = self._global_plan_world_coord[-1][0]
+            goal = geometry_msgs.msg.PoseStamped()
+            goal.header.stamp = current_ros_time
+            goal.header.frame_id = self.map_frame
+            goal.pose.position.x = last_wp.location.x
+            goal.pose.position.y = last_wp.location.y
+            goal.pose.position.z = last_wp.location.z
+            self.pub_route_goal.publish(goal) # To start the Petri Nets node (equivalent to introduce
+            # a goal in RVIZ, required to evaluate the other states)
 
+            geometry_msgs.msg.PoseStamped
             if self.debug_planning_route_points:
                 routeNodes = get_routeNodes(self.route)
                 waypoints_marker = markers_module.get_nodes(routeNodes, [0,0,1], "2", 8, 0.5, 1, 0)
                 self.pub_planning_routes_marker.publish(waypoints_marker)
             
-            self.traffic_signals = signal_parser.parse_signals(hd_map['opendrive'], 1)
-            nodes = []
-            for signal in self.traffic_signals:
-                node = monitor_classes.Node3D()
-                node.x = signal['x']
-                node.y = -signal['y']
-                node.z = signal['z']
-                nodes.append(node)
-            signals_marker = markers_module.get_nodes(
-                nodes = nodes, rgb = [1,0,1], name = "2", marker_type = 8, 
-                scale = 1.5, extra_z = 1, lifetime = 0)
-            self.pub_signals_visualizator_marker.publish(signals_marker)
+            traffic_lights_signals, stop_signals = signal_parser.parse_regElems(self.LWP.map_object.roads)
+
+            # Publish as t4ac_msgs.msg.RegulatoryElements
+
+            regulatory_elements = RegulatoryElementList()
+
+            for signal in traffic_lights_signals:
+                regelem = RegulatoryElement()
+                regelem.type = signal['name']
+                regelem.id = signal['id']
+                regelem.global_location.pose.position.x = signal['x']
+                regelem.global_location.pose.position.y = signal['y']
+                regelem.global_location.pose.position.z = signal['z']
+                [qx, qy, qz, qw] = euler_to_quaternion(0, 0, signal['yaw'])
+                regelem.global_location.pose.orientation.x = qx
+                regelem.global_location.pose.orientation.y = qy
+                regelem.global_location.pose.orientation.z = qz
+                regelem.global_location.pose.orientation.w = qw
+                regulatory_elements.reg_elems.append(regelem)
+
+            for signal in stop_signals:
+                regelem = RegulatoryElement()
+                regelem.type = signal['name']
+                regelem.id = signal['id']
+                regelem.global_location.pose.position.x = signal['x']
+                regelem.global_location.pose.position.y = signal['y']
+                regelem.global_location.pose.position.z = signal['z']
+                regulatory_elements.reg_elems.append(regelem)
+
+            self.pub_regulatory_elements.publish(regulatory_elements)
+
             self.trajectory_flag = False
 
         actual_speed = (input_data['Speed'][1])['speed']
@@ -321,7 +363,6 @@ class RobesafeAgent(AutonomousAgent):
         self.cameras_callback(cameras, current_ros_time)
 
         self.lidar_callback(lidar, current_ros_time)
-        self.traffic_lights_callback(current_ros_time) 
         control = self.control_callback(actual_speed)
 
         return control 
@@ -367,7 +408,7 @@ class RobesafeAgent(AutonomousAgent):
     
     def cameras_callback(self, cameras, current_ros_time):
         """
-        Return the information of the correspondin camera as a sensor_msgs.Image ROS message based on a string 
+        Return the information of the corresponding camera as a sensor_msgs.Image ROS message based on a string 
         that contains the camera information
         """
         for index_camera, raw_image in enumerate(cameras):
@@ -555,83 +596,6 @@ class RobesafeAgent(AutonomousAgent):
         """
         self.pose_ekf = data
         
-    def traffic_lights_callback(self, current_ros_time):
-        """
-        """
-
-        # Map to LiDAR
-
-        try:                                                         # Target        # Source
-            (translation,quaternion) = self.listener.lookupTransform(self.lidar_frame, self.map_frame, rospy.Time(0)) 
-            # rospy.Time(0) get us the latest available transform
-            rot_matrix = tf.transformations.quaternion_matrix(quaternion)
-            
-            self.tf_lidar2map = rot_matrix
-            self.tf_lidar2map[:3,3] = self.tf_lidar2map[:3,3] + translation # This matrix transforms local to global coordinates
-        except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-            print("\033[1;33m"+"TF LiDAR2Map exception"+'\033[0;m')
-
-        nearest_signals = []
-        distance_th = 50
-        publish_topics = False
-
-        vehicle_pose = np.array([self.pose_ekf.pose.pose.position.x, self.pose_ekf.pose.pose.position.y])
-        current_traffic_light = Odometry()
-        current_traffic_light.header.stamp = current_ros_time
-        current_traffic_light.header.frame_id = self.map_frame
-        current_traffic_light.pose.pose.position.x = 50000
-        current_traffic_light.pose.pose.position.y = 50000 
-        current_traffic_light.pose.pose.position.z = 50000
-
-        nearest_distance = 1000 
-
-        for i, signal in enumerate(self.traffic_signals):
-            signal_pose = np.array([signal['x'], signal['y']])
-            dist = np.linalg.norm(vehicle_pose - signal_pose)
-        
-            if (dist < distance_th):
-                nearest_signals.append(signal)
-
-                if (round(signal['yaw'], 4) >= round(2 * math.pi, 4)):
-                    signal['yaw'] -= 2 * math.pi
-                elif (round(signal['yaw'], 4) <= round(- 2 * math.pi, 4)):
-                    signal['yaw'] += 2 * math.pi
-                if (round(signal['yaw'], 4) < 0 ):
-                    signal['yaw'] += 2 * math.pi
-
-                diff_angle = math.pi - abs(abs(self.ego_vehicle_yaw - signal['yaw']) - math.pi)
-                
-                if (diff_angle < 0.52) and (dist < nearest_distance): # 0.52 radians = 30 º, to consider curves
-                    # Transform to local coordinates to check if the traffic light is in front of the ego-vehicle
-
-                    if np.any(self.tf_lidar2map):
-                        global_point = Node()
-                        global_point.x = signal['x']
-                        global_point.y = signal['y']
-                        global_point.z = signal['z']
-                        local_point = apply_tf(global_point, self.tf_lidar2map)
-
-                        if local_point.x > 0:
-                            nearest_distance = dist           
-                            current_traffic_light.pose.pose.position.x = signal['x']
-                            current_traffic_light.pose.pose.position.y = signal['y']
-                            current_traffic_light.pose.pose.position.z = signal['z']
-                            publish_topics = True
-
-        if publish_topics:
-            node = monitor_classes.Node3D()
-            node.x = current_traffic_light.pose.pose.position.x
-            node.y = -current_traffic_light.pose.pose.position.y # -y since RVIZ representation is right-handed rule
-            node.z = current_traffic_light.pose.pose.position.z
-            nodes = []
-            nodes.append(node)
-            nodes.append(node)
-            signals_marker = markers_module.get_nodes(
-                nodes = nodes, rgb = [0,1,0], name = "current_traffic_light", marker_type = 8, 
-                scale = 1.5, extra_z = 1, lifetime = 1)
-            self.pub_signals_visualizator_marker.publish(signals_marker)
-        self.pub_current_traffic_light.publish(current_traffic_light)
-
     # Destroy the agent
 
     def destroy(self):
