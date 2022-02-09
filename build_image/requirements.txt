@@ -8,7 +8,7 @@ opencv-python==4.2.0.32
 torch==1.7.1 # 1.8
 torchvision==0.8.2 # 0.9.1
 py_trees==0.8.3
-Shapely==1.6.4.post2
+shapely #Shapely==1.6.4.post2
 six
 dictor 
 requests 

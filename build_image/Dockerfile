@@ -28,6 +28,7 @@ RUN apt-get update && DEBIAN_FRONTEND="noninteractive" apt-get install -y --no-i
 	     libpng16-16 \
 	     libtiff5 \
          libpng-dev \
+         libyaml-cpp-dev \
          lsb-core \
          python3-dev \
          python3-setuptools \
@@ -74,10 +75,10 @@ RUN echo "alias RUN_EVALUATION='cd /workspace/team_code/ && ./clear_run_evaluati
 
 ## Setup ROS
 RUN /bin/bash -c 'source /opt/ros/noetic/setup.bash;\
-                  cd /workspace/team_code/catkin_ws;\
-                  catkin_make -j8;'
+                 cd /workspace/team_code/catkin_ws;\
+                 catkin_make -j8;'
 RUN /bin/bash -c 'echo "source /opt/ros/noetic/setup.bash" >> ~/.bashrc ;\
-                  echo "source /workspace/team_code/catkin_ws/devel/setup.bash" >> ~/.bashrc;'
+                 echo "source /workspace/team_code/catkin_ws/devel/setup.bash" >> ~/.bashrc;'
 
 ## ROS Entrypoint
 ADD agent_sources.sh /root/
