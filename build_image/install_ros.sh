@@ -8,7 +8,8 @@ DEBIAN_FRONTEND="noninteractive" apt install -y ros-noetic-pcl-ros
 DEBIAN_FRONTEND="noninteractive" apt install -y python3-rosdep python3-rosinstall python3-rosinstall-generator python3-wstool \
                                                 ros-noetic-geographic-msgs ros-noetic-geodesy ros-noetic-vision-msgs libgeographic-dev \
                                                 ros-noetic-ros-numpy ros-noetic-visualization-msgs ros-noetic-diagnostic-updater \
-                                                ros-noetic-eigen-conversions ros-noetic-tf2-geometry-msgs ros-noetic-roslint
+                                                ros-noetic-eigen-conversions ros-noetic-tf2-geometry-msgs ros-noetic-roslint \
+                                                ros-noetic-cv-bridge ros-noetic-image-geometry
 
 rosdep init
 rosdep update
