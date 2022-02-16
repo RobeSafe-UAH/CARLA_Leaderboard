@@ -1,5 +1,12 @@
-# SmartMOT
-How to build and validate a safe and reliable Autonomous Driving stack? A ROS based software modular architecture baseline
+# RobeSafe research group Autonomous Driving Stack (ADS)
+
+@inproceedings{robesafe_ads,
+  title={How to build and validate a safe and reliable Autonomous Driving stack? A ROS based software modular architecture baseline},
+  author={Gómez-Huélamo, Carlos and Díaz-Díaz, Alejandro and Araluce, Javier and Ortíz-Huamaní, Miguel E., Gutiérrez-Moreno, Rodrigo and Arango, Felipe and Llamazares, Ángel and Bergasa, Luis M.},
+  booktitle={2022 IEEE Intelligent Vehicles Symposium (IV): In submission},
+  year={2022},
+  organization={IEEE}
+}
 
 <img src="media_files/general_architecture_pipeline.jpg"/>
 
@@ -27,6 +34,7 @@ Coming soon ...
 ## Quantitative results
 Coming soon ...
 ## Qualitative results
+[Qualitative Results](https://cutt.ly/SPyu0lU)
 
 **How to clone this repository?**
 ```
