@@ -31,6 +31,7 @@ RUN apt-get update && DEBIAN_FRONTEND="noninteractive" apt-get install -y --no-i
          libyaml-cpp-dev \
          lsb-core \
          python3-dev \
+         python-is-python3 \
          python3-setuptools \
          python3-pip && \ 
          pip3 install --upgrade pip && \

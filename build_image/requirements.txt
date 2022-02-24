@@ -20,3 +20,4 @@ pygame
 utm
 seaborn==0.11.1
 pyquaternion
+transforms3d
