@@ -29,3 +29,7 @@
 [submodule "catkin_ws/src/t4ac_config_layer"]
 	path = catkin_ws/src/t4ac_config_layer
 	url = git@github.com:RobeSafe-UAH/Techs4AgeCar-Config-Layer.git
+[submodule "catkin_ws/src/ros-bridge"]
+	path = catkin_ws/src/ros-bridge
+	url = git@github.com:RobeSafe-UAH/ros-bridge.git
+	branch = 2021_carla_challenge
