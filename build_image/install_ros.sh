@@ -9,7 +9,7 @@ DEBIAN_FRONTEND="noninteractive" apt install -y python3-rosdep python3-rosinstal
                                                 ros-noetic-geographic-msgs ros-noetic-geodesy ros-noetic-vision-msgs libgeographic-dev \
                                                 ros-noetic-ros-numpy ros-noetic-visualization-msgs ros-noetic-diagnostic-updater \
                                                 ros-noetic-eigen-conversions ros-noetic-tf2-geometry-msgs ros-noetic-roslint \
-                                                ros-noetic-cv-bridge ros-noetic-image-geometryros-noetic-ackermann-msgs \
+                                                ros-noetic-cv-bridge ros-noetic-image-geometry ros-noetic-ackermann-msgs \
 						  ros-noetic-derived-object-msgs ros-noetic-rqt-gui-py ros-noetic-rviz
 
 rosdep init
