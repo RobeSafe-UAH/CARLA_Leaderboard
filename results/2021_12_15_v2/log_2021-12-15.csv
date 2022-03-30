@@ -1,0 +1,6 @@
+Id	Town	DST	DGT	RCT	ORLT	CT	RRLT	RST	IRT	ABT	TOut
+1	Town02	2140.17	650.6	100	0	0	3	0	S	S	S
+2	Town03	1922.96	599.15	100	0	10	0	3	S	S	S
+3	Town03	3127.04	876.85	83.2	0	59	1	1	S	F	S
+-	-	-	-	-	-	-	-	-	-	-	-
+				94.4	0.0	69	4	4			
