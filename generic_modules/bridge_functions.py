@@ -2,11 +2,15 @@ import numpy as np
 import cv2
 import sys
 import utm
+import math
 
 sys.path.insert(0, '/workspace/team_code/catkin_ws/src/t4ac_planning_layer/')
 sys.path.insert(0, '/workspace/team_code/catkin_ws/src/t4ac_mapping_layer/')
 from t4ac_map_monitor_ros.src.modules import monitor_classes
-from sensor_msgs.msg import PointCloud2, PointField, Image, CameraInfo
+from sensor_msgs.msg import PointCloud2, PointField, Image, CameraInfo, NavSatFix, NavSatStatus, Imu
+from geometry_msgs.msg import TwistWithCovarianceStamped
+from nav_msgs.msg import Odometry
+from generic_modules.geometric_functions import euler_to_quaternion
 
 def lidar_string_to_array(lidar, half_cloud=None, whole_cloud=None):
     """
@@ -156,14 +160,116 @@ def get_routeNodes(route):
         nodes.append(node)
     return nodes
 
-
-
-
-
-
-
-
-
-
+def process_localization(gnss, imu, actual_speed, current_ros_time, map_frame, base_link_frame, enabled_pose, count_localization):
+    """
+    Return UTM position (x,y,z) and orientation of the ego-vehicle as a nav_msgs.Odometry ROS message based on the
+    gnss information (WGS84) and imu (to compute the orientation)
+        GNSS    ->  latitude =  gnss[0] ; longitude = gnss[1] ; altitude = gnss[2]
+        IMU     ->  accelerometer.x = imu[0] ; accelerometer.y = imu[1] ; accelerometer.z = imu[2] ; 
+                    gyroscope.x = imu[3]  ;  gyroscope.y = imu[4]  ;  gyroscope.z = imu[5]  ;  compass = imu[6]
+    """
     
+    # Read and publish GNSS data
+    gnss_msg = NavSatFix()
+    gnss_msg.header.stamp = current_ros_time
+    gnss_msg.header.frame_id = 'gnss'
+    gnss_msg.latitude = gnss[0]
+    gnss_msg.longitude = gnss[1]
+    gnss_msg.altitude = gnss[2]
+    gnss_msg.status.status = NavSatStatus.STATUS_SBAS_FIX
+    gnss_msg.status.service = NavSatStatus.SERVICE_GPS | NavSatStatus.SERVICE_GLONASS | NavSatStatus.SERVICE_COMPASS | NavSatStatus.SERVICE_GALILEO
     
+    # Convert Geographic (latitude, longitude) to UTM (x,y) coordinates
+    gnss_msg.latitude = -gnss_msg.latitude
+    EARTH_RADIUS_EQUA = 6378137.0   # pylint: disable=invalid-name
+    scale = math.cos(gnss_msg.latitude * math.pi / 180.0)
+    x = scale * gnss_msg.longitude * math.pi * EARTH_RADIUS_EQUA / 180.0 
+    # Negative y to correspond to carla documentations
+    y = - scale * EARTH_RADIUS_EQUA * math.log(math.tan((90.0 + gnss_msg.latitude) * math.pi / 360.0))  
+    #################################################################################################
+    #####  It doesn't work with CARLA, they use an approximation to perform the conversion #######
+    # import utm
+    # ....
+    # gnss_msg.latitude = -gnss_msg.latitude # Since in CARLA Towns the y-reference is the opposite
+    # u = utm.from_latlon(gnss_msg.latitude, gnss_msg.longitude)
+    # x = u[0] - self.origin[0]
+    # y = u[1] - self.origin[1]
+    #################################################################################################
+    ##----------- Errores en las medidas:  ------------------
+    ##   x_gnss = ±  1.75m      y_gnss = ± 1.75m
+    ##   yaw_compass = ± 0.00     
+    ##   actual_speed = ± 0.00 m/s      
+    ##   x_acc_imu = ± 0.0025    y_acc_imu = ±  0.0025   z_vel_imu = ± 0.0025   
+    ##   IMU: cuidado con espurios muy muy pocos con aceleraciones mayores de ± 10000 m/s2
+    #################################################################################################
+
+    # Read IMU data -> Yaw angle is used to give orientation to the gnss pose 
+    roll = 0
+    pitch = 0
+    compass = imu[6]
+
+    if (0 < compass < math.radians(180)):
+        yaw = -compass + math.radians(90)
+    else:
+        yaw = -compass + math.radians(450)
+            
+    [qx, qy, qz, qw] = euler_to_quaternion(roll, pitch, yaw)
+
+    gnss_pose_msg = Odometry()
+    gnss_pose_msg.header.frame_id = map_frame
+    gnss_pose_msg.child_frame_id = base_link_frame
+    gnss_pose_msg.header.stamp = current_ros_time
+    gnss_pose_msg.pose.pose.position.x = x
+    gnss_pose_msg.pose.pose.position.y = y
+    gnss_pose_msg.pose.pose.position.z = 0
+    gnss_pose_msg.pose.pose.orientation.x = qx
+    gnss_pose_msg.pose.pose.orientation.y = qy
+    gnss_pose_msg.pose.pose.orientation.z = qz
+    gnss_pose_msg.pose.pose.orientation.w = qw
+
+    speed_msg = TwistWithCovarianceStamped()
+    speed_msg.header.frame_id = base_link_frame
+    speed_msg.header.stamp = current_ros_time
+    speed_msg.twist.twist.linear.x = actual_speed
+    speed_msg.twist.twist.linear.y = 0
+    
+    imu_msg = Imu()
+    imu_msg.header.frame_id = base_link_frame
+    imu_msg.header.stamp = current_ros_time
+    imu_msg.orientation.x = qx
+    imu_msg.orientation.y = qy
+    imu_msg.orientation.z = qz
+    imu_msg.orientation.w = qw
+    imu_msg.angular_velocity.x = 0
+    imu_msg.angular_velocity.y = 0
+    imu_msg.angular_velocity.z = -imu[5]  ##Carla tiene los ejes de coordenadas de todo (mapa, sensores...) con la Y en sentido opuesto
+    imu_msg.linear_acceleration.x = imu[0]
+    imu_msg.linear_acceleration.y = 0   ##Carla tiene los ejes de coordenadas de todo (mapa, sensores...) con la Y en sentido opuesto
+    imu_msg.linear_acceleration.z = 0
+
+    if not enabled_pose:
+        gnss_translation_error = 0.00001 # [m]  ##Para converger rápidamente 
+        count_localization += 1
+        if (count_localization >= 50):
+            enabled_pose = True
+    else:
+        if (actual_speed > 0.25):
+            gnss_translation_error = 2.5 # [m]  
+        else:
+            gnss_translation_error = 50.0 # [m]  ##Para evitar oscilaciones en parado
+            
+    #gnss_translation_error = 2.5 # [m] 0.5   5000000000: no la tiene en cuenta  ;  50: la filtra bien pero es lento  ; 0.05 reduzco error frenada (con error gnss 0)
+    gnss_rotation_error = 0.001 # [rad] 0.001
+
+    x_speed_error = 4.5 # [m/s]
+    y_speed_error = 0.001 # [m/s]
+    
+    imu_gyroscope_error = 4.5
+    imu_accelerometer_error = 4.5
+
+    gnss_pose_msg.pose.covariance = np.diag([gnss_translation_error, gnss_translation_error, 0, 0, 0, gnss_rotation_error]).ravel()
+    speed_msg.twist.covariance = np.diag([x_speed_error, y_speed_error, 0, 0, 0, 0]).ravel()
+    imu_msg.angular_velocity_covariance = np.diag([0, 0, imu_gyroscope_error]).ravel()
+    imu_msg.linear_acceleration_covariance = np.diag([imu_accelerometer_error, imu_accelerometer_error, 0]).ravel()
+
+    return gnss_msg, gnss_pose_msg, speed_msg, imu_msg, yaw, enabled_pose, count_localization

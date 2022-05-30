@@ -28,10 +28,11 @@ import tf
 import geometry_msgs
 from nav_msgs.msg import Odometry
 from sensor_msgs.point_cloud2 import create_cloud
-from sensor_msgs.msg import Image, CameraInfo, NavSatFix, NavSatStatus, PointCloud2, PointField
+from sensor_msgs.msg import Image, CameraInfo, NavSatFix, NavSatStatus, PointCloud2, PointField, Imu
+from geometry_msgs.msg import TwistWithCovarianceStamped
 from t4ac_msgs.msg import Node, RegulatoryElement, RegulatoryElementList, MonitorizedLanes
 from cv_bridge import CvBridge
-from std_msgs.msg import Header, String
+from std_msgs.msg import Header, String, Bool
 import visualization_msgs.msg
 
 # Math and geometry imports
@@ -44,7 +45,7 @@ import numpy as np
 from generic_modules.geometric_functions import euler_to_quaternion
 from generic_modules.bridge_functions import build_camera_info, build_camera_info_from_file, \
                                      cv2_to_imgmsg, image_rectification, \
-                                     lidar_string_to_array, get_routeNodes
+                                     lidar_string_to_array, get_routeNodes, process_localization
 from t4ac_global_planner_ros.src.lane_waypoint_planner import LaneWaypointPlanner
 from map_parser import signal_parser
 from t4ac_map_monitor_ros.src.modules import markers_module, monitor_classes
@@ -89,7 +90,9 @@ class RobesafeAgent(AutonomousAgent):
         ## Localization
 
         self.pose_ekf = Odometry()
-        self.ego_vehicle_yaw = 0
+        self.ego_vehicle_yaw = 0       
+        self.enabled_pose = False
+        self.count_localization = 0
 
         ## Control
 
@@ -116,9 +119,8 @@ class RobesafeAgent(AutonomousAgent):
         ## Publishers
 
         self.pub_hdmap = rospy.Publisher('/t4ac/mapping/opendrive_data', String, queue_size=1, latch=True)
-        self.pub_gnss_pose = rospy.Publisher('/t4ac/localization/gnss_pose', Odometry, queue_size=1)#, latch=True)
-        self.pub_gnss_fix = rospy.Publisher('/t4ac/localization/fix', NavSatFix, queue_size=1)#, latch=True)
         self.pub_lidar_pointcloud = rospy.Publisher('/t4ac/perception/sensors/lidar', PointCloud2, queue_size=10)
+        self.pub_radar_pointcloud = rospy.Publisher('/t4ac/perception/sensors/radar', PointCloud2, queue_size=10)
 
         self.pub_regulatory_elements = rospy.Publisher('/t4ac/mapping/map_monitor/regulatory_elements', RegulatoryElementList, queue_size=10, latch=True)
         self.pub_planning_routes_marker = rospy.Publisher('/t4ac/planning/route_points_marker', visualization_msgs.msg.Marker, queue_size=10)
@@ -162,6 +164,7 @@ class RobesafeAgent(AutonomousAgent):
         self.map_frame = rospy.get_param('/t4ac/frames/map')
         self.base_link_frame = rospy.get_param('/t4ac/frames/base_link')
         self.lidar_frame = rospy.get_param('/t4ac/frames/lidar')
+        self.radar_frame = rospy.get_param('/t4ac/frames/radar')
 
         ## Transforms 
 
@@ -194,6 +197,8 @@ class RobesafeAgent(AutonomousAgent):
         self.xlidar, self.ylidar, self.zlidar = self.lidar_position[:3]
         self.gnss_position = rospy.get_param('/t4ac/tf/base_link_to_gnss_tf')
         self.xgnss, self.ygnss, self.zgnss = self.gnss_position[:3]
+        self.radar_position = rospy.get_param('t4ac/tf/base_link_to_radar_tf')
+        self.xradar, self.yradar, self.zradar = self.radar_position[:3]
 
         parameters = rospy.get_param_names()
 
@@ -265,6 +270,7 @@ class RobesafeAgent(AutonomousAgent):
         sensors.append({'type': 'sensor.other.imu', 'x': self.xgnss, 'y': self.ygnss, 'z': self.zgnss, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'id': 'IMU'})
         sensors.append({'type': 'sensor.opendrive_map', 'reading_frequency': 1, 'id': 'OpenDRIVE'})
         sensors.append({'type': 'sensor.speedometer',  'reading_frequency': 20, 'id': 'Speed'})
+        sensors.append({'type': 'sensor.other.radar', 'x': self.xradar, 'y': self.yradar, 'z': self.zradar, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'fov': 90, 'id': 'RADAR'})
                     
         return sensors
 
@@ -346,6 +352,7 @@ class RobesafeAgent(AutonomousAgent):
         gnss = (input_data['GNSS'][1])
         imu = (input_data['IMU'][1])
         lidar = (input_data['LiDAR'][1])
+        radar = (input_data['RADAR'][1])
 
         # Publish until control has started   
 
@@ -353,9 +360,19 @@ class RobesafeAgent(AutonomousAgent):
             # subscribe, not hardcoding a minimum speed
             self.LWP.publish_waypoints(self.route)
 
-        # Callbacks
+        # Localization Layer   
+        enabled_pose_msg = Bool()     
+        gnss_msg = NavSatFix()
+        gnss_pose_msg = Odometry()
+        speed_msg = TwistWithCovarianceStamped()
+        imu_msg = Imu()
 
-        self.gnss_imu_callback(gnss, imu, current_ros_time)
+        gnss_msg, gnss_pose_msg, speed_msg, imu_msg, self.ego_vehicle_yaw, self.enabled_pose, self.count_localization = process_localization(gnss, imu, actual_speed, current_ros_time, self.map_frame, self.base_link_frame, self.enabled_pose, self.count_localization)
+        enabled_pose_msg.data = self.enabled_pose
+
+        self.RobesafeAgentROS.publish_localization(enabled_pose_msg, gnss_msg, gnss_pose_msg, speed_msg, imu_msg)
+
+        # Callbacks
 
         cameras = []
         for camera in self.cameras_parameters:
@@ -363,6 +380,7 @@ class RobesafeAgent(AutonomousAgent):
         self.cameras_callback(cameras, current_ros_time)
 
         self.lidar_callback(lidar, current_ros_time)
+        self.radar_callback(radar, current_ros_time)
         control = self.control_callback(actual_speed)
 
         return control 
@@ -406,6 +424,55 @@ class RobesafeAgent(AutonomousAgent):
         else:
             self.half_cloud = lidar_string_to_array(lidar)
     
+    def radar_callback(self, radar_data, current_ros_time):
+
+        # New header with current ROS information: time and frame link
+        header = Header()
+        header.stamp = current_ros_time
+        header.frame_id = self.radar_frame
+
+        # print("-" * 75)
+        # print(f"'\033[93m'INPUT is {radar_data} and its type is {type(radar_data)}. Its shape is {len(radar_data)}'\033[0m'")
+
+
+        # CARLA Radar Raw Data format
+        # Source: https://carla.readthedocs.io/en/latest/python_api/#carlaradardetection
+
+        # vel, azimuth, altitude, depth
+
+        # [:,0]: Depth [m]
+        # [:,1]: Azimuth [rad]
+        # [:,2]: Altitude [rad]
+        # [:,3]: Vel [m/s]
+        # Adaptation to ROS Bridge taken from: 
+        #   https://github.com/carla-simulator/ros-bridge/blob/master/carla_ros_bridge/src/carla_ros_bridge/radar.py
+        #   https://carla.readthedocs.io/en/latest/ref_sensors/#radar-sensor
+
+        fields = [
+            PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
+            PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
+            PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
+            PointField(name='Range', offset=12, datatype=PointField.FLOAT32, count=1),
+            PointField(name='Velocity', offset=16, datatype=PointField.FLOAT32, count=1),
+            PointField(name='AzimuthAngle', offset=20, datatype=PointField.FLOAT32, count=1),
+            PointField(name='ElevationAngle', offset=28, datatype=PointField.FLOAT32, count=1)]
+      
+        points = []
+        for detection in radar_data:
+            points.append([detection[0] * np.cos(detection[2]) * np.cos(-detection[1]),     # X
+                           detection[0] * np.sin(-detection[2]) * np.cos(detection[1]),     # Y
+                           detection[0] * np.sin(detection[1]),                             # Z
+                           detection[0],                                                    # Range (depth)
+                           detection[3],                                                    # Velocity
+                           detection[2],                                                    # Azimuth
+                           detection[1]])                                                   # Altitude
+
+        # print(f"'\033[93m'OUTPUT is {points} and its type is {type(points)}. Its shape is {len(points)}'\033[0m'")
+
+        radar_msg = create_cloud(header, fields, points)
+
+        self.RobesafeAgentROS.publish_radar(radar_msg)
+        
     def cameras_callback(self, cameras, current_ros_time):
         """
         Return the information of the corresponding camera as a sensor_msgs.Image ROS message based on a string 
@@ -469,77 +536,6 @@ class RobesafeAgent(AutonomousAgent):
             self.cameras_parameters[index_camera]['image_rect_pub'].publish(roi_rectified_image)
             self.cameras_parameters[index_camera]['camera_info_rect_pub'].publish(rectified_image_info)
         end = time.time()
-
-    def gnss_imu_callback(self, gnss, imu, current_ros_time):
-        """
-        Return UTM position (x,y,z) and orientation of the ego-vehicle as a nav_msgs.Odometry ROS message based on the
-        gnss information (WGS84) and imu (to compute the orientation)
-            GNSS    ->  latitude =  gnss[0] ; longitude = gnss[1] ; altitude = gnss[2]
-            IMU     ->  accelerometer.x = imu[0] ; accelerometer.y = imu[1] ; accelerometer.z = imu[2] ; 
-                        gyroscope.x = imu[3]  ;  gyroscope.y = imu[4]  ;  gyroscope.z = imu[5]  ;  compas = imu[6]
-        """
-        
-        # Read and publish GNSS data
-        gnss_msg = NavSatFix()
-        gnss_msg.header.stamp = current_ros_time
-        gnss_msg.header.frame_id = 'gnss'
-        gnss_msg.latitude = gnss[0]
-        gnss_msg.longitude = gnss[1]
-        gnss_msg.altitude = gnss[2]
-        gnss_msg.status.status = NavSatStatus.STATUS_SBAS_FIX
-        gnss_msg.status.service = NavSatStatus.SERVICE_GPS | NavSatStatus.SERVICE_GLONASS | NavSatStatus.SERVICE_COMPASS | NavSatStatus.SERVICE_GALILEO
-        self.pub_gnss_fix.publish(gnss_msg)
-
-        gnss_pose_msg = Odometry()
-        gnss_pose_msg.header.frame_id = self.map_frame
-        gnss_pose_msg.child_frame_id = self.base_link_frame
-        gnss_pose_msg.header.stamp = current_ros_time
-
-        # Convert Geographic (latitude, longitude) to UTM (x,y) coordinates
-        gnss_msg.latitude = -gnss_msg.latitude
-        EARTH_RADIUS_EQUA = 6378137.0   # pylint: disable=invalid-name
-        scale = math.cos(gnss_msg.latitude * math.pi / 180.0)
-        x = scale * gnss_msg.longitude * math.pi * EARTH_RADIUS_EQUA / 180.0 
-        # Negative y to correspond to carla documentations
-        y = - scale * EARTH_RADIUS_EQUA * math.log(math.tan((90.0 + gnss_msg.latitude) * math.pi / 360.0))  
-        
-        #################################################################################################
-        #####  It doesn't work with CARLA, they use an approximation to perform the conversion #######
-        # import utm
-        # ....
-        # gnss_msg.latitude = -gnss_msg.latitude # Since in CARLA Towns the y-reference is the opposite
-        # u = utm.from_latlon(gnss_msg.latitude, gnss_msg.longitude)
-        # x = u[0] - self.origin[0]
-        # y = u[1] - self.origin[1]
-        #################################################################################################
-
-        # Read IMU data -> Yaw angle is used to give orientation to the gnss pose 
-        roll = 0
-        pitch = 0
-        compass = imu[6]
-
-        if (0 < compass < math.radians(180)):
-            yaw = -compass + math.radians(90)
-        else:
-            yaw = -compass + math.radians(450)
-                
-        [qx, qy, qz, qw] = euler_to_quaternion(roll, pitch, yaw)
-        self.ego_vehicle_yaw = yaw
-
-        gnss_pose_msg.pose.pose.position.x = x
-        gnss_pose_msg.pose.pose.position.y = y 
-        gnss_pose_msg.pose.pose.position.z = 0
-
-        gnss_pose_msg.pose.pose.orientation.x = qx
-        gnss_pose_msg.pose.pose.orientation.y = qy
-        gnss_pose_msg.pose.pose.orientation.z = qz
-        gnss_pose_msg.pose.pose.orientation.w = qw
-
-        gnns_error = 1.5
-        gnss_pose_msg.pose.covariance = np.diag([gnns_error, gnns_error, gnns_error, 0, 0, 0]).ravel()
-
-        # self.pub_gnss_pose.publish(gnss_pose_msg)
-        self.RobesafeAgentROS.publish_localization(gnss_pose_msg)
 
  
     def control_callback(self, actual_speed):
@@ -606,5 +602,9 @@ class RobesafeAgent(AutonomousAgent):
         """
 
         self.t4ac_architecture_launch.shutdown()
+
+        self.ego_vehicle_yaw = 0       
+        self.enabled_pose = False
+        self.count_localization = 0
 
         pass
