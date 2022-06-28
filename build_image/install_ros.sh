@@ -11,7 +11,7 @@ DEBIAN_FRONTEND="noninteractive" apt install -y python3-rosdep python3-rosinstal
                                                 ros-noetic-eigen-conversions ros-noetic-tf2-geometry-msgs ros-noetic-roslint \
                                                 ros-noetic-cv-bridge ros-noetic-image-geometry ros-noetic-ackermann-msgs \
 						                        ros-noetic-derived-object-msgs ros-noetic-rqt-gui ros-noetic-rqt-gui-py \
-                                                ros-noetic-rviz ros-noetic-roslint
+                                                ros-noetic-rviz ros-noetic-roslint ros-noetic-rosbash
 
 rosdep init
 rosdep update

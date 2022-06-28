@@ -52,7 +52,6 @@ from t4ac_map_monitor_ros.src.modules import markers_module, monitor_classes
 sys.path.insert(0, '/workspace/team_code/catkin_ws/src/t4ac_unified_perception_layer/src/')
 from modules.monitors.monitors_functions import apply_tf, inside_lane, calculate_distance_to_nearest_object_inside_route
 sys.path.insert(0, '/workspace/team_code/catkin_ws/src/t4ac_config_layer/t4ac_utils_ros/src/')
-# from RobesafeAgent_ROS import publish_lidar, publish_localization, publish_cmd_vel
 from RobesafeAgent_ROS import RobesafeAgentROS
 
 ### Auxiliar functions
@@ -205,7 +204,7 @@ class RobesafeAgent(AutonomousAgent):
         cameras_id = []
         parameters = rospy.get_param_names()
         for parameter in parameters:
-            if "t4ac/sensors" in parameter and "camera" in parameter:
+            if "t4ac/sensors" in parameter and "camera" in parameter: # and not "demo" in parameter:
                 camera_id = parameter.split('/')[-1]
                 cameras_id.append(camera_id)
 
@@ -232,8 +231,6 @@ class RobesafeAgent(AutonomousAgent):
                                 'camera_parameters_path': camera_parameters_path,
                                 'image_raw_pub': rospy.Publisher('/t4ac/perception/sensors/camera/' + camera_id + '/image_raw', Image, queue_size=20, latch=True), # 100
                                 'camera_info_pub': rospy.Publisher('/t4ac/perception/sensors/camera/' + camera_id + '/camera_info', CameraInfo, queue_size=20, latch=True), # 100
-                                # 'image_rect_pub': rospy.Publisher('/t4ac/perception/sensors/camera/' + camera_id + '/image_rect', Image, queue_size=20), # 100
-                                # 'camera_info_rect_pub': rospy.Publisher('/t4ac/perception/sensors/camera/' + camera_id + '/rect/camera_info', CameraInfo, queue_size=20), # 100
                                 'frame': rospy.get_param('/t4ac/frames/camera_' + str(camera_id)),
                                 'camera_position_3D': np.array([0, 0]).reshape(-1,2), # With respect to a common frame, that would represent the 0,0.
                                                                                       # If set to 0,0, each camera is an independent frame and after
@@ -242,6 +239,8 @@ class RobesafeAgent(AutonomousAgent):
                                 'x': camera_position[0],
                                 'y': camera_position[1],
                                 'z': camera_position[2],
+                                'roll': (camera_position[3] + 1.57079632679) * (-90 / 1.57079632679),
+                                'pitch': (camera_position[4] + 1.57079632679) * (-90 / 1.57079632679),
                                 'yaw': (camera_position[5] + 1.57079632679) * (-90 / 1.57079632679)
             })
             self.cameras_parameters.append(camera_dict)
@@ -260,10 +259,12 @@ class RobesafeAgent(AutonomousAgent):
     def sensors(self):
         sensors = []
 
+        # TODO: Check roll,pitch,yaw in config_file (sensor origin vs our TF origin)
         for _, camera in enumerate(self.cameras_parameters):
             sensors.append({'type': 'sensor.camera.rgb', 'x': camera['x'], 'y': camera['y'], 'z': camera['z'], 
-                            'roll': 0.0, 'pitch': 0.0, 'yaw': camera['yaw'], 'width': camera['width'], 
-                            'height': camera['height'], 'fov': camera['fov'], 'id': camera['id']}) 
+                            # 'roll': camera['roll'], 'pitch': camera['pitch'], 'yaw': camera['yaw'],
+                            'roll': 0, 'pitch': 0, 'yaw': camera['yaw'], 
+                            'width': camera['width'], 'height': camera['height'], 'fov': camera['fov'], 'id': camera['id']}) 
 
         sensors.append({'type': 'sensor.lidar.ray_cast', 'x': self.xlidar, 'y': self.ylidar, 'z': self.zlidar, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'id': 'LiDAR'})
         sensors.append({'type': 'sensor.other.gnss', 'x': self.xgnss, 'y': self.ygnss, 'z': self.zgnss, 'id': 'GNSS'})
@@ -271,7 +272,7 @@ class RobesafeAgent(AutonomousAgent):
         sensors.append({'type': 'sensor.opendrive_map', 'reading_frequency': 1, 'id': 'OpenDRIVE'})
         sensors.append({'type': 'sensor.speedometer',  'reading_frequency': 20, 'id': 'Speed'})
         sensors.append({'type': 'sensor.other.radar', 'x': self.xradar, 'y': self.yradar, 'z': self.zradar, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'fov': 90, 'id': 'RADAR'})
-                    
+
         return sensors
 
     # Run step function
@@ -299,6 +300,7 @@ class RobesafeAgent(AutonomousAgent):
             
             # Every element of self._global_plan_world_coord is a tuple with the corresponding wp in global coordinates
             # and a flag to indicate if lane change is required
+            
             last_wp = self._global_plan_world_coord[-1][0]
             goal = geometry_msgs.msg.PoseStamped()
             goal.header.stamp = current_ros_time
@@ -361,13 +363,17 @@ class RobesafeAgent(AutonomousAgent):
             self.LWP.publish_waypoints(self.route)
 
         # Localization Layer   
+
         enabled_pose_msg = Bool()     
         gnss_msg = NavSatFix()
         gnss_pose_msg = Odometry()
         speed_msg = TwistWithCovarianceStamped()
         imu_msg = Imu()
 
-        gnss_msg, gnss_pose_msg, speed_msg, imu_msg, self.ego_vehicle_yaw, self.enabled_pose, self.count_localization = process_localization(gnss, imu, actual_speed, current_ros_time, self.map_frame, self.base_link_frame, self.enabled_pose, self.count_localization)
+        gnss_msg, gnss_pose_msg, speed_msg, imu_msg, \
+        self.ego_vehicle_yaw, self.enabled_pose, self.count_localization = \
+            process_localization(gnss, imu, actual_speed, current_ros_time, self.map_frame, 
+                                 self.base_link_frame, self.enabled_pose, self.count_localization)
         enabled_pose_msg.data = self.enabled_pose
 
         self.RobesafeAgentROS.publish_localization(enabled_pose_msg, gnss_msg, gnss_pose_msg, speed_msg, imu_msg)
@@ -419,34 +425,32 @@ class RobesafeAgent(AutonomousAgent):
                         PointField('intensity', 12, PointField.FLOAT32, 1),
                         ]
             point_cloud_msg = create_cloud(header, fields, lidar_data)
-            # self.pub_lidar_pointcloud.publish(point_cloud_msg)
+
             self.RobesafeAgentROS.publish_lidar(point_cloud_msg)
         else:
             self.half_cloud = lidar_string_to_array(lidar)
     
     def radar_callback(self, radar_data, current_ros_time):
+        """
+        CARLA Radar Raw Data format
+        Source: https://carla.readthedocs.io/en/latest/python_api/#carlaradardetection
+
+        vel, azimuth, altitude, depth
+
+        [:,0]: Depth [m]
+        [:,1]: Azimuth [rad]
+        [:,2]: Altitude [rad]
+        [:,3]: Vel [m/s]
+        Adaptation to ROS Bridge taken from: 
+          https://github.com/carla-simulator/ros-bridge/blob/master/carla_ros_bridge/src/carla_ros_bridge/radar.py
+          https://carla.readthedocs.io/en/latest/ref_sensors/#radar-sensor
+        """
 
         # New header with current ROS information: time and frame link
+
         header = Header()
         header.stamp = current_ros_time
         header.frame_id = self.radar_frame
-
-        # print("-" * 75)
-        # print(f"'\033[93m'INPUT is {radar_data} and its type is {type(radar_data)}. Its shape is {len(radar_data)}'\033[0m'")
-
-
-        # CARLA Radar Raw Data format
-        # Source: https://carla.readthedocs.io/en/latest/python_api/#carlaradardetection
-
-        # vel, azimuth, altitude, depth
-
-        # [:,0]: Depth [m]
-        # [:,1]: Azimuth [rad]
-        # [:,2]: Altitude [rad]
-        # [:,3]: Vel [m/s]
-        # Adaptation to ROS Bridge taken from: 
-        #   https://github.com/carla-simulator/ros-bridge/blob/master/carla_ros_bridge/src/carla_ros_bridge/radar.py
-        #   https://carla.readthedocs.io/en/latest/ref_sensors/#radar-sensor
 
         fields = [
             PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
@@ -467,8 +471,6 @@ class RobesafeAgent(AutonomousAgent):
                            detection[2],                                                    # Azimuth
                            detection[1]])                                                   # Altitude
 
-        # print(f"'\033[93m'OUTPUT is {points} and its type is {type(points)}. Its shape is {len(points)}'\033[0m'")
-
         radar_msg = create_cloud(header, fields, points)
 
         self.RobesafeAgentROS.publish_radar(radar_msg)
@@ -481,68 +483,14 @@ class RobesafeAgent(AutonomousAgent):
         for index_camera, raw_image in enumerate(cameras):
             raw_image = cv2_to_imgmsg(raw_image, self.encoding)
             raw_image.header.stamp = current_ros_time
-            raw_image.header.frame_id = self.cameras_parameters[index_camera]['frame']    
-            self.cameras_parameters[index_camera]['image_raw_pub'].publish(raw_image)
-
-    def rectified_cameras_callback(self, cameras, current_ros_time):
-        """
-        Return the information of the correspondin camera as a sensor_msgs.Image ROS message based on a string 
-        that contains the camera information
-        """
-        start = time.time()
-        for index_camera, raw_image in enumerate(cameras):
-            raw_image_K = build_camera_info(raw_image.shape[1], raw_image.shape[0], 
-                                            self.cameras_parameters[index_camera]['fx'],
-                                            self.cameras_parameters[index_camera]['fy'],
-                                            self.cameras_parameters[index_camera]['camera_position_3D'][0,0],
-                                            self.cameras_parameters[index_camera]['camera_position_3D'][0,1], 
-                                            current_ros_time, self.cameras_parameters[index_camera]['frame'],
-                                            distorted_image=True)
-        
-            # Rectify the image
-
-            cv_image = self.bridge.imgmsg_to_cv2(raw_image, desired_encoding='passthrough')
-
-            if self.calibrate_camera:
-                cv2.imwrite("/workspace/team_code/generic_modules/camera_parameters/distorted_image_" + str(self.cameras_parameters[index_camera]['id']) + ".png", cv_image)
-
-            camera_parameters_path = self.cameras_parameters[index_camera]['camera_parameters_path']
-            start_rect = time.time()
-            roi_rectified_image = image_rectification(raw_image, raw_image_K, camera_parameters_path)
-            end_rect = time.time()
-            
-            start_roi = time.time()
-            roi_rectified_image = cv2_to_imgmsg(raw_image, self.encoding)
-            end_roi = time.time()
-            roi_rectified_image.header.stamp = current_ros_time
-            roi_rectified_image.header.frame_id = self.cameras_parameters[index_camera]['frame']
-            
-            fov = self.cameras_parameters[index_camera]['fov']
-            roi_fx = roi_rectified_image.width / (2.0 * math.tan(fov * math.pi / 360.0))
-            roi_fy = roi_fx
-            
-            rectified_image_info = build_camera_info_from_file(self.cameras_parameters[index_camera]['frame'],
-                                                               self.cameras_parameters[index_camera]['camera_position_3D'][0,0],
-                                                               self.cameras_parameters[index_camera]['camera_position_3D'][0,1],
-                                                               current_ros_time,
-                                                               camera_parameters_path)
-
-            raw_image = cv2_to_imgmsg(raw_image, self.encoding) # to publish as ROS topic
-            raw_image.header.stamp = current_ros_time
             raw_image.header.frame_id = self.cameras_parameters[index_camera]['frame']
             
             self.cameras_parameters[index_camera]['image_raw_pub'].publish(raw_image)
-            # self.cameras_parameters[index_camera]['camera_info_pub'](raw_image_info) # TODO: Calculate the rectification matrix based on the distortion coefficients
-            self.cameras_parameters[index_camera]['image_rect_pub'].publish(roi_rectified_image)
-            self.cameras_parameters[index_camera]['camera_info_rect_pub'].publish(rectified_image_info)
-        end = time.time()
 
- 
     def control_callback(self, actual_speed):
         """
         Return the current state of the vehicle regarding the control layer
         """
-        # error_speed = self.speed_cmd - actual_speed  # distance away from setpoint [m/s]
 
         self.speed_cmd, self.steer_cmd = self.RobesafeAgentROS.publish_cmd_vel()
         error_speed = self.speed_cmd - actual_speed  # distance away from setpoint [m/s]
@@ -578,7 +526,7 @@ class RobesafeAgent(AutonomousAgent):
         control.brake = brake
         control.hand_brake = False
 
-        return control
+        return control # Return to CARLA simulator
 
     def read_cmd_vel_callback(self, cmd_vel):
         """

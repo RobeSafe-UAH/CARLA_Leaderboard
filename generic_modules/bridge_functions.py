@@ -248,7 +248,7 @@ def process_localization(gnss, imu, actual_speed, current_ros_time, map_frame, b
     imu_msg.linear_acceleration.z = 0
 
     if not enabled_pose:
-        gnss_translation_error = 0.00001 # [m]  ##Para converger rápidamente 
+        gnss_translation_error = 0.0001 # [m]  ##Para converger rápidamente 
         count_localization += 1
         if (count_localization >= 50):
             enabled_pose = True
