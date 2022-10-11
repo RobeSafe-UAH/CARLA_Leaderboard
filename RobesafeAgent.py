@@ -506,9 +506,6 @@ class RobesafeAgent(AutonomousAgent):
 
         throttle = (error_speed*self.Kp) + self.error_sum
 
-        if (self.speed_cmd == 0):
-            self.error_sum = 0  # Reset PI
-
         # Brake
 
         brake = 0
@@ -517,6 +514,10 @@ class RobesafeAgent(AutonomousAgent):
             throttle = 0
         if (throttle > 1):
             throttle = 1
+
+        if (self.speed_cmd == 0):
+            self.error_sum = 0  # Reset PI
+            brake = 1
 
         # Return control
 
