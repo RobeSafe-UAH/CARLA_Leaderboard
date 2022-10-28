@@ -32,7 +32,7 @@ from sensor_msgs.msg import Image, CameraInfo, NavSatFix, NavSatStatus, PointClo
 from geometry_msgs.msg import TwistWithCovarianceStamped
 from t4ac_msgs.msg import Node, RegulatoryElement, RegulatoryElementList, MonitorizedLanes
 from cv_bridge import CvBridge
-from std_msgs.msg import Header, String, Bool
+from std_msgs.msg import Header, String, Bool, Float64
 import visualization_msgs.msg
 
 # Math and geometry imports
@@ -46,6 +46,9 @@ from generic_modules.geometric_functions import euler_to_quaternion
 from generic_modules.bridge_functions import build_camera_info, build_camera_info_from_file, \
                                      cv2_to_imgmsg, image_rectification, \
                                      lidar_string_to_array, get_routeNodes, process_localization
+
+from generic_modules.bridge_functions import Localization_EKF
+
 from t4ac_global_planner_ros.src.lane_waypoint_planner import LaneWaypointPlanner
 from map_parser import signal_parser
 from t4ac_map_monitor_ros.src.modules import markers_module, monitor_classes
@@ -68,6 +71,12 @@ class RobesafeAgent(AutonomousAgent):
     def setup(self, path_to_conf_file):
         print("\033[1;31m"+"Start init configuration: "+'\033[0;m')
 
+        ## Time variables
+
+        self.current_time = time.time()
+        self.current_sim_time = None
+        self.sim_freq = 20 # Hz
+
         ### Layers variables
 
         self.time_sleep = 1
@@ -89,9 +98,11 @@ class RobesafeAgent(AutonomousAgent):
         ## Localization
 
         self.pose_ekf = Odometry()
-        self.ego_vehicle_yaw = 0       
+        self.ego_vehicle_yaw = 0  
+        self.ego_vehicle_last_yaw = 0     
         self.enabled_pose = False
         self.count_localization = 0
+        self.ekf = None
 
         ## Control
 
@@ -125,6 +136,8 @@ class RobesafeAgent(AutonomousAgent):
         self.pub_planning_routes_marker = rospy.Publisher('/t4ac/planning/route_points_marker', visualization_msgs.msg.Marker, queue_size=10)
         self.pub_route_goal = rospy.Publisher('/t4ac/planning/goal',geometry_msgs.msg.PoseStamped, queue_size=10,latch=True)
         
+        self.pub_control_cmd = rospy.Publisher('/t4ac/challenge/run_step_ex', Bool, queue_size=1)
+
         ## Subscribers
 
         # self.sub_cmd_vel = rospy.Subscriber('/t4ac/control/cmd_vel', CarControl, self.read_cmd_vel_callback)
@@ -254,6 +267,9 @@ class RobesafeAgent(AutonomousAgent):
 
         print("\033[1;31m"+"End init configuration: "+'\033[0;m')
 
+        self.cont_aux = time.time()
+        self.flag_aux = False
+
     # Specify your sensors
 
     def sensors(self):
@@ -281,13 +297,23 @@ class RobesafeAgent(AutonomousAgent):
         """
         Execute one step of navigation. Gather the sensor information
         """
-        current_ros_time = rospy.Time.now()
+        self.current_time += float(1/self.sim_freq)
+        self.current_sim_time = rospy.Time.from_sec(self.current_time)
 
         while (self.current_simulation_iteration_stamp <= self.previous_simulation_iteration_stamp):
             continue
         self.previous_simulation_iteration_stamp = self.current_simulation_iteration_stamp
 
+        # Control ex.
+        self.pub_control_cmd.publish(Bool(True))
+
         # Get sensor data
+
+        actual_speed = (input_data['Speed'][1])['speed']
+        gnss = (input_data['GNSS'][1])
+        imu = (input_data['IMU'][1])
+        lidar = (input_data['LiDAR'][1])
+        radar = (input_data['RADAR'][1])
 
         if (self.trajectory_flag) and ("OpenDRIVE" in list(input_data.keys())):
             hd_map = (input_data['OpenDRIVE'][1])
@@ -303,7 +329,7 @@ class RobesafeAgent(AutonomousAgent):
             
             last_wp = self._global_plan_world_coord[-1][0]
             goal = geometry_msgs.msg.PoseStamped()
-            goal.header.stamp = current_ros_time
+            goal.header.stamp = self.current_sim_time
             goal.header.frame_id = self.map_frame
             goal.pose.position.x = last_wp.location.x
             goal.pose.position.y = last_wp.location.y
@@ -348,14 +374,6 @@ class RobesafeAgent(AutonomousAgent):
 
             self.pub_regulatory_elements.publish(regulatory_elements)
 
-            self.trajectory_flag = False
-
-        actual_speed = (input_data['Speed'][1])['speed']
-        gnss = (input_data['GNSS'][1])
-        imu = (input_data['IMU'][1])
-        lidar = (input_data['LiDAR'][1])
-        radar = (input_data['RADAR'][1])
-
         # Publish until control has started   
 
         if actual_speed < 0.2: # TODO: Improve this. Publish until the corresponding subscribers have
@@ -367,26 +385,30 @@ class RobesafeAgent(AutonomousAgent):
         enabled_pose_msg = Bool()     
         gnss_msg = NavSatFix()
         gnss_pose_msg = Odometry()
+        filtered_pose_msg = Odometry()
         speed_msg = TwistWithCovarianceStamped()
         imu_msg = Imu()
 
-        gnss_msg, gnss_pose_msg, speed_msg, imu_msg, \
-        self.ego_vehicle_yaw, self.enabled_pose, self.count_localization = \
-            process_localization(gnss, imu, actual_speed, current_ros_time, self.map_frame, 
-                                 self.base_link_frame, self.enabled_pose, self.count_localization)
+        self.ekf, filtered_pose_msg, gnss_msg, gnss_pose_msg, speed_msg, imu_msg, \
+        self.ego_vehicle_yaw, self.enabled_pose, self.count_localization, self.ego_vehicle_last_yaw = \
+            process_localization(self.ekf, gnss, imu, actual_speed, self.current_sim_time, self.map_frame, 
+                                 self.base_link_frame, self.enabled_pose, self.count_localization, self.trajectory_flag, self.ego_vehicle_last_yaw)
+        
         enabled_pose_msg.data = self.enabled_pose
 
-        self.RobesafeAgentROS.publish_localization(enabled_pose_msg, gnss_msg, gnss_pose_msg, speed_msg, imu_msg)
+        self.trajectory_flag = False
+
+        self.RobesafeAgentROS.publish_localization(enabled_pose_msg, filtered_pose_msg, gnss_msg, gnss_pose_msg, speed_msg, imu_msg)
 
         # Callbacks
 
         cameras = []
         for camera in self.cameras_parameters:
             cameras.append(input_data[camera['id']][1]) 
-        self.cameras_callback(cameras, current_ros_time)
+        self.cameras_callback(cameras, self.current_sim_time)
 
-        self.lidar_callback(lidar, current_ros_time)
-        self.radar_callback(radar, current_ros_time)
+        self.lidar_callback(lidar, self.current_sim_time)
+        self.radar_callback(radar, self.current_sim_time)
         control = self.control_callback(actual_speed)
 
         return control 
@@ -399,7 +421,7 @@ class RobesafeAgent(AutonomousAgent):
 
         self.current_simulation_iteration_stamp = flag_processed_data_msg.stamp
 
-    def lidar_callback(self, lidar, current_ros_time):
+    def lidar_callback(self, lidar, current_time):
         """
         Return the LiDAR pointcloud as a sensor_msgs.PointCloud2 ROS message based on a string that contains
         the LiDAR information
@@ -411,7 +433,7 @@ class RobesafeAgent(AutonomousAgent):
             self.lidar_count = 0
 
             header = Header()
-            header.stamp = current_ros_time
+            header.stamp = current_time
             header.frame_id = self.lidar_frame
 
             whole_cloud = True
@@ -430,7 +452,7 @@ class RobesafeAgent(AutonomousAgent):
         else:
             self.half_cloud = lidar_string_to_array(lidar)
     
-    def radar_callback(self, radar_data, current_ros_time):
+    def radar_callback(self, radar_data, current_time):
         """
         CARLA Radar Raw Data format
         Source: https://carla.readthedocs.io/en/latest/python_api/#carlaradardetection
@@ -449,7 +471,7 @@ class RobesafeAgent(AutonomousAgent):
         # New header with current ROS information: time and frame link
 
         header = Header()
-        header.stamp = current_ros_time
+        header.stamp = current_time
         header.frame_id = self.radar_frame
 
         fields = [
@@ -475,14 +497,14 @@ class RobesafeAgent(AutonomousAgent):
 
         self.RobesafeAgentROS.publish_radar(radar_msg)
         
-    def cameras_callback(self, cameras, current_ros_time):
+    def cameras_callback(self, cameras, current_time):
         """
         Return the information of the corresponding camera as a sensor_msgs.Image ROS message based on a string 
         that contains the camera information
         """
         for index_camera, raw_image in enumerate(cameras):
             raw_image = cv2_to_imgmsg(raw_image, self.encoding)
-            raw_image.header.stamp = current_ros_time
+            raw_image.header.stamp = current_time
             raw_image.header.frame_id = self.cameras_parameters[index_camera]['frame']
             
             self.cameras_parameters[index_camera]['image_raw_pub'].publish(raw_image)
@@ -544,6 +566,7 @@ class RobesafeAgent(AutonomousAgent):
     # Destroy the agent
 
     def destroy(self):
+        
         
         """
         Destroy (clean-up) the agent

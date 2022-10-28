@@ -1,0 +1,84 @@
+{
+    "_checkpoint": {
+        "global_record": {},
+        "progress": [
+            2,
+            21
+        ],
+        "records": [
+            {
+                "index": 0,
+                "infractions": {
+                    "collisions_layout": [],
+                    "collisions_pedestrian": [],
+                    "collisions_vehicle": [],
+                    "outside_route_lanes": [],
+                    "red_light": [
+                        "Agent ran a red light 135 at (x=-96.887, y=124.371, z=0.151)",
+                        "Agent ran a red light 152 at (x=163.677, y=-216.694, z=0.139)"
+                    ],
+                    "route_dev": [],
+                    "route_timeout": [],
+                    "stop_infraction": [],
+                    "vehicle_blocked": []
+                },
+                "meta": {
+                    "duration_game": 553.4500082470477,
+                    "duration_system": 1415.2544748783112,
+                    "route_length": 1314.9550457632936
+                },
+                "route_id": "RouteScenario_9",
+                "scores": {
+                    "score_composed": 48.99999999999999,
+                    "score_penalty": 0.48999999999999994,
+                    "score_route": 100.0
+                },
+                "status": "Completed"
+            },
+            {
+                "index": 1,
+                "infractions": {
+                    "collisions_layout": [],
+                    "collisions_pedestrian": [
+                        "Agent collided against object with type=walker.pedestrian.0007 and id=437 at (x=591.824, y=-17.072, z=0.034)"
+                    ],
+                    "collisions_vehicle": [],
+                    "outside_route_lanes": [],
+                    "red_light": [
+                        "Agent ran a red light 362 at (x=677.42, y=55.0, z=0.15)",
+                        "Agent ran a red light 418 at (x=143.12, y=-27.39, z=0.0)"
+                    ],
+                    "route_dev": [],
+                    "route_timeout": [],
+                    "stop_infraction": [],
+                    "vehicle_blocked": []
+                },
+                "meta": {
+                    "duration_game": 503.85000750795007,
+                    "duration_system": 1199.1187372207642,
+                    "route_length": 1129.3702320707187
+                },
+                "route_id": "RouteScenario_10",
+                "scores": {
+                    "score_composed": 24.499999999999996,
+                    "score_penalty": 0.24499999999999997,
+                    "score_route": 100.0
+                },
+                "status": "Completed"
+            }
+        ]
+    },
+    "eligible": false,
+    "entry_status": "Started",
+    "labels": [],
+    "sensors": [
+        "carla_camera",
+        "carla_lidar",
+        "carla_gnss",
+        "carla_imu",
+        "carla_opendrive_map",
+        "carla_speedometer",
+        "carla_radar"
+    ],
+    "values": []
+}
