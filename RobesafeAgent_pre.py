@@ -28,7 +28,8 @@ import tf
 import geometry_msgs
 from nav_msgs.msg import Odometry
 from sensor_msgs.point_cloud2 import create_cloud
-from sensor_msgs.msg import Image, CameraInfo, PointCloud2, PointField
+from sensor_msgs.msg import Image, CameraInfo, NavSatFix, NavSatStatus, PointCloud2, PointField, Imu
+from geometry_msgs.msg import TwistWithCovarianceStamped
 from t4ac_msgs.msg import Node, RegulatoryElement, RegulatoryElementList, MonitorizedLanes
 from cv_bridge import CvBridge
 from std_msgs.msg import Header, String, Bool, Float64
@@ -95,7 +96,9 @@ class RobesafeAgent(AutonomousAgent):
         self.lidar_count = 0
 
         ## Localization
- 
+
+        self.pose_ekf = Odometry()
+        self.ego_vehicle_yaw = 0  
         self.ego_vehicle_last_yaw = 0     
         self.enabled_pose = False
         self.count_localization = 0
@@ -136,6 +139,9 @@ class RobesafeAgent(AutonomousAgent):
         self.pub_control_cmd = rospy.Publisher('/t4ac/challenge/run_step_ex', Bool, queue_size=1)
 
         ## Subscribers
+
+        # self.sub_cmd_vel = rospy.Subscriber('/t4ac/control/cmd_vel', CarControl, self.read_cmd_vel_callback)
+        self.sub_pose_ekf = rospy.Subscriber('/t4ac/localization/pose', Odometry, self.read_pose_callback)
 
         flag_processed_data_topic = "/t4ac/perception/flag_processed_data"
         self.sub_flag_processed_data = rospy.Subscriber(flag_processed_data_topic, Header, self.flag_processed_data_callback)
@@ -221,7 +227,7 @@ class RobesafeAgent(AutonomousAgent):
             camera_id = center, right, left, rear
             camera_parameters = width, height, fov
             """
-            
+
             camera_parameters = rospy.get_param('/t4ac/sensors/camera/' + str(camera_id)) # width, height, fov
             camera_position = rospy.get_param('/t4ac/tf/base_link_to_camera_' + str(camera_id) + '_tf') # x,y,z,roll,pitch,yaw
             camera_parameters_path = self.camera_parameters_path + str(camera_parameters[0]) + '_' + str(camera_parameters[1]) + '_' + str(camera_parameters[2]) + '/'
@@ -244,7 +250,7 @@ class RobesafeAgent(AutonomousAgent):
                                                                                       # obtaining the 3D information they will have to transform to a
                                                                                       # common frame (e.g. all cameras -> front_bumper_center -> map)
                                 'x': camera_position[0],
-                                'y': camera_position[1],
+                                'y': camera_position[1], 
                                 'z': camera_position[2],
                                 'roll': (camera_position[3] + 1.57079632679) * (-90 / 1.57079632679),
                                 'pitch': (camera_position[4] + 1.57079632679) * (-90 / 1.57079632679),
@@ -382,11 +388,14 @@ class RobesafeAgent(AutonomousAgent):
         # Localization Layer   
 
         enabled_pose_msg = Bool()     
+        gnss_msg = NavSatFix()
         gnss_pose_msg = Odometry()
         filtered_pose_msg = Odometry()
-        
-        self.ekf, filtered_pose_msg, gnss_pose_msg, \
-        self.enabled_pose, self.count_localization, self.ego_vehicle_last_yaw = \
+        speed_msg = TwistWithCovarianceStamped()
+        imu_msg = Imu()
+
+        self.ekf, filtered_pose_msg, gnss_msg, gnss_pose_msg, speed_msg, imu_msg, \
+        self.ego_vehicle_yaw, self.enabled_pose, self.count_localization, self.ego_vehicle_last_yaw = \
             process_localization(self.ekf, gnss, imu, actual_speed, self.current_sim_time, self.map_frame, 
                                  self.base_link_frame, self.enabled_pose, self.count_localization, self.trajectory_flag, self.ego_vehicle_last_yaw)
         
@@ -394,7 +403,7 @@ class RobesafeAgent(AutonomousAgent):
 
         self.trajectory_flag = False
 
-        self.RobesafeAgentROS.publish_localization(enabled_pose_msg, filtered_pose_msg, gnss_pose_msg)
+        self.RobesafeAgentROS.publish_localization(enabled_pose_msg, filtered_pose_msg, gnss_msg, gnss_pose_msg, speed_msg, imu_msg)
 
         # Callbacks
 
@@ -554,6 +563,10 @@ class RobesafeAgent(AutonomousAgent):
         self.speed_cmd = cmd_vel.velocity
         self.steer_cmd = cmd_vel.steer
 
+    def read_pose_callback(self, data):
+        """
+        """
+        self.pose_ekf = data
         
     # Destroy the agent
 
@@ -567,6 +580,7 @@ class RobesafeAgent(AutonomousAgent):
 
         self.t4ac_architecture_launch.shutdown()
 
+        self.ego_vehicle_yaw = 0       
         self.enabled_pose = False
         self.count_localization = 0
 

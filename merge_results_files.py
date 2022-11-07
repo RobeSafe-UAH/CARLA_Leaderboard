@@ -11,6 +11,7 @@ import glob
 import glob2
 import copy
 import os
+import pdb
 import argparse
 import re
 
@@ -143,5 +144,6 @@ if __name__ == "__main__":
 
     # save data
     start_inference_data = out_folder.split('/')[-1]
+
     town_metrics.to_csv(os.path.join(out_folder, "town_metrics_"+start_inference_data+".csv"), index_label="Id", sep="\t", na_rep="-", float_format="%.3f")
     global_metrics.to_csv(os.path.join(out_folder, "global_metrics_"+start_inference_data+".csv"), index_label="Id", sep="\t", na_rep="-", float_format="%.3f")

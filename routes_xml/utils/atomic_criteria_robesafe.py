@@ -13,6 +13,8 @@ Criteria should run continuously to monitor the state of a single actor, multipl
 actors or environmental parameters. Hence, a termination is not required.
 
 The atomic criteria are implemented with py_trees.
+
+Modified by RobeSafe research group
 """
 
 import weakref

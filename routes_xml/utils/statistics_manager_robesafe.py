@@ -7,6 +7,8 @@
 
 """
 This module contains a statistics manager for the CARLA AD leaderboard
+
+Modified by RobeSafe research group
 """
 
 from __future__ import print_function

@@ -8,6 +8,8 @@
 """
 This module contains the result gatherer and write for CARLA scenarios.
 It shall be used from the ScenarioManager only.
+
+Modified by RobeSafe research group
 """
 
 from __future__ import print_function

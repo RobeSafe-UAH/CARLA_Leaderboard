@@ -11,6 +11,7 @@ from sensor_msgs.msg import PointCloud2, PointField, Image, CameraInfo, NavSatFi
 from geometry_msgs.msg import TwistWithCovarianceStamped
 from nav_msgs.msg import Odometry
 from generic_modules.geometric_functions import euler_to_quaternion
+from generic_modules.extended_kalman_filter import ExtendedKalmanFilter as EKF
 
 def lidar_string_to_array(lidar, half_cloud=None, whole_cloud=None):
     """
@@ -169,28 +170,23 @@ def process_localization(ekf, gnss, imu, actual_speed, current_ros_time, map_fra
                     gyroscope.x = imu[3]  ;  gyroscope.y = imu[4]  ;  gyroscope.z = imu[5]  ;  compass = imu[6]
     """
 
-    # Read and publish GNSS data
-    gnss_msg = NavSatFix()
-    gnss_msg.header.stamp = current_ros_time
-    gnss_msg.header.frame_id = 'gnss'
-    gnss_msg.latitude = gnss[0]
-    gnss_msg.longitude = gnss[1]
-    gnss_msg.altitude = gnss[2]
-    gnss_msg.status.status = NavSatStatus.STATUS_SBAS_FIX
-    gnss_msg.status.service = NavSatStatus.SERVICE_GPS | NavSatStatus.SERVICE_GLONASS | NavSatStatus.SERVICE_COMPASS | NavSatStatus.SERVICE_GALILEO
+    # Read GNSS data
+    latitude = -gnss[0]   #Negative y to correspond to carla axis
+    longitude = gnss[1]
+    altitude = gnss[2]
     
     # Convert Geographic (latitude, longitude) to UTM (x,y) coordinates
-    gnss_msg.latitude = -gnss_msg.latitude
     EARTH_RADIUS_EQUA = 6378137.0   # pylint: disable=invalid-name
-    scale = math.cos(gnss_msg.latitude * math.pi / 180.0)
-    x = scale * gnss_msg.longitude * math.pi * EARTH_RADIUS_EQUA / 180.0 
+    scale = math.cos(latitude * math.pi / 180.0)
+    x = scale * longitude * math.pi * EARTH_RADIUS_EQUA / 180.0 
     # Negative y to correspond to carla documentations
-    y = - scale * EARTH_RADIUS_EQUA * math.log(math.tan((90.0 + gnss_msg.latitude) * math.pi / 360.0))      
+    y = - scale * EARTH_RADIUS_EQUA * math.log(math.tan((90.0 + latitude) * math.pi / 360.0))      
 
     # Read IMU data -> Yaw angle is used to give orientation to the gnss pose 
     roll = 0
     pitch = 0
     compass = imu[6]
+    yaw_velocity = -imu[5] ##Carla tiene los ejes de coordenadas de todo (mapa, sensores...) con la Y en sentido opuesto
 
     if np.isnan(compass): #Sometimes we receive NaN measurement by compass
         yaw = last_yaw
@@ -201,12 +197,14 @@ def process_localization(ekf, gnss, imu, actual_speed, current_ros_time, map_fra
         else:
             yaw = -compass + math.radians(450)
         last_yaw = yaw
-
-    if init_flag:
-        ekf = Localization_EKF(np.array([x,y,yaw]))
-
     [qx, qy, qz, qw] = euler_to_quaternion(roll, pitch, yaw)
 
+    # Process EKF filter
+    if init_flag:
+        ekf = Localization_EKF(np.array([x,y,yaw]))
+    x_filtered, y_filtered = ekf.kalman_filter(x, y, actual_speed, yaw_velocity)
+    
+    # Filling in ROS messages for publishing
     gnss_pose_msg = Odometry()
     gnss_pose_msg.header.frame_id = map_frame
     gnss_pose_msg.child_frame_id = base_link_frame
@@ -218,52 +216,15 @@ def process_localization(ekf, gnss, imu, actual_speed, current_ros_time, map_fra
     gnss_pose_msg.pose.pose.orientation.y = qy
     gnss_pose_msg.pose.pose.orientation.z = qz
     gnss_pose_msg.pose.pose.orientation.w = qw
+    gnss_pose_msg.twist.twist.linear.x = actual_speed
+    gnss_pose_msg.twist.twist.angular.z = yaw_velocity
+    gnss_translation_error = 0.55 # std. deviation -> error_lat = error_long = 0.000005deg -> x_error = y_error = 0.55m
+    gnss_rotation_error = 0.0 # error compass = 0 deg
+    gnss_pose_msg.pose.covariance = np.diag([gnss_translation_error, gnss_translation_error, 0.0, 0.0, 0.0, gnss_rotation_error]).ravel()
+    speedometer_error = 0.0
+    imu_gyroscope_error = 0.001 # standard deviation of yaw rate in rad/s
+    gnss_pose_msg.twist.covariance = np.diag([speedometer_error, 0.0, 0.0, 0.0, 0.0, imu_gyroscope_error]).ravel()
 
-    speed_msg = TwistWithCovarianceStamped()
-    speed_msg.header.frame_id = base_link_frame
-    speed_msg.header.stamp = current_ros_time
-    speed_msg.twist.twist.linear.x = actual_speed
-    speed_msg.twist.twist.linear.y = 0
-    
-    imu_msg = Imu()
-    imu_msg.header.frame_id = base_link_frame
-    imu_msg.header.stamp = current_ros_time
-    imu_msg.orientation.x = qx
-    imu_msg.orientation.y = qy
-    imu_msg.orientation.z = qz
-    imu_msg.orientation.w = qw
-    imu_msg.angular_velocity.x = 0
-    imu_msg.angular_velocity.y = 0
-    imu_msg.angular_velocity.z = -imu[5]  ##Carla tiene los ejes de coordenadas de todo (mapa, sensores...) con la Y en sentido opuesto
-    imu_msg.linear_acceleration.x = imu[0]
-    imu_msg.linear_acceleration.y = 0   ##Carla tiene los ejes de coordenadas de todo (mapa, sensores...) con la Y en sentido opuesto
-    imu_msg.linear_acceleration.z = 0
-
-    if not enabled_pose:
-        gnss_translation_error = 0.01 # [m]  ##Para converger rápidamente 
-        count_localization += 1
-        if (count_localization >= 50):
-            enabled_pose = True
-    else:
-        if (actual_speed > 0.25):
-            gnss_translation_error = 5.0 # [m]  
-        else:
-            gnss_translation_error = 60.0 # [m]  ##Para evitar oscilaciones en parado
-            
-    gnss_rotation_error = 0.001 # [rad] 0.001
-
-    x_speed_error = 4.5 # [m/s]  4.5
-    y_speed_error = 0.00001 # [m/s] 0.001 #
-    
-    imu_gyroscope_error = 4.5  #4.5
-    imu_accelerometer_error = 4.5  #4.5
-
-    gnss_pose_msg.pose.covariance = np.diag([gnss_translation_error, gnss_translation_error, 0.00001, 0.00001, 0.00001, gnss_rotation_error]).ravel()
-    speed_msg.twist.covariance = np.diag([x_speed_error, y_speed_error, 0.00001, 0.00001, 0.00001, 0.00001]).ravel()
-    imu_msg.angular_velocity_covariance = np.diag([0, 0, imu_gyroscope_error]).ravel()
-    imu_msg.linear_acceleration_covariance = np.diag([imu_accelerometer_error, 0.000001, 0.00001]).ravel()
-
-    x_filtered, y_filtered = ekf.kalman_filter(x, y, actual_speed, -imu[5])
     filtered_pose_msg = Odometry()
     filtered_pose_msg.header.frame_id = map_frame
     filtered_pose_msg.child_frame_id = base_link_frame
@@ -275,10 +236,15 @@ def process_localization(ekf, gnss, imu, actual_speed, current_ros_time, map_fra
     filtered_pose_msg.pose.pose.orientation.y = qy
     filtered_pose_msg.pose.pose.orientation.z = qz
     filtered_pose_msg.pose.pose.orientation.w = qw
-    
-    return ekf, filtered_pose_msg, gnss_msg, gnss_pose_msg, speed_msg, imu_msg, yaw, enabled_pose, count_localization, last_yaw
+    filtered_pose_msg.twist.twist.linear.x = actual_speed
 
-from generic_modules.extended_kalman_filter import ExtendedKalmanFilter as EKF
+    if not enabled_pose:   ##Espera de 1seg converger EKF
+        gnss_translation_error = 0.01 # [m]  
+        count_localization += 1
+        if (count_localization >= 20):
+            enabled_pose = True
+   
+    return ekf, filtered_pose_msg, gnss_pose_msg, enabled_pose, count_localization, last_yaw
 
 class Localization_EKF():
     """

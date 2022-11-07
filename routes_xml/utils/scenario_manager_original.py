@@ -15,11 +15,6 @@ import signal
 import sys
 import time
 
-import numpy as np
-import t4ac_msgs.msg
-import tf
-import math
-
 import py_trees
 import carla
 
@@ -31,39 +26,13 @@ from leaderboard.autoagents.agent_wrapper import AgentWrapper, AgentError
 from leaderboard.envs.sensor_interface import SensorReceivedNoData
 from leaderboard.utils.result_writer import ResultOutputProvider
 
-def apply_tf(source_location, transform):  
-    """
-    Input: t4ac_msgs.msg.Node() in the source frame
-    Output: t4ac_msgs.msg.Node() in the target frame 
-    """
-    centroid = np.array([0.0,0.0,0.0,1.0]).reshape(4,1)
-
-    try:
-        centroid[0,0] = source_location.x 
-        centroid[1,0] = source_location.y
-        centroid[2,0] = source_location.z
-    except:
-        centroid[0,0] = source_location[0] # LiDAR points (3,)
-        centroid[1,0] = source_location[1]
-        centroid[2,0] = source_location[2]
-
-    aux = np.dot(transform,centroid) 
-
-    target_location = t4ac_msgs.msg.Node()
-    target_location.x = aux[0,0]
-    target_location.y = aux[1,0]
-    target_location.z = aux[2,0]
-
-    return target_location
 
 class ScenarioManager(object):
 
     """
     Basic scenario manager class. This class holds all functionality
     required to start, run and stop a scenario.
-
     The user must not modify this class.
-
     To use the ScenarioManager:
     1. Create an object via manager = ScenarioManager()
     2. Load a scenario via manager.load_scenario()
@@ -82,14 +51,6 @@ class ScenarioManager(object):
         self.scenario_tree = None
         self.scenario_class = None
         self.ego_vehicles = None
-
-        self.ego_yaw_origin = None
-        self.ego_yaw_diff = 0.0
-        self.ego_pitch_origin = None
-        self.ego_pitch_diff = 0.0
-        self.ego_roll_origin = None
-        self.ego_roll_diff = 0.0
-
         self.other_actors = None
 
         self._debug_mode = debug_mode
@@ -98,21 +59,15 @@ class ScenarioManager(object):
         self._timestamp_last_run = 0.0
         self._timeout = float(timeout)
 
-        # Used to detect if the simulation is down
-        watchdog_timeout = max(5, self._timeout - 2)
-        self._watchdog = Watchdog(watchdog_timeout)
-
-        # Avoid the agent from freezing the simulation
-        agent_timeout = watchdog_timeout - 1
-        self._agent_watchdog = Watchdog(agent_timeout)
-
         self.scenario_duration_system = 0.0
         self.scenario_duration_game = 0.0
         self.start_system_time = None
         self.end_system_time = None
         self.end_game_time = None
 
-        # Register the scenario tick as callback for the CARLA world
+        self._watchdog = None
+        self._agent_watchdog = None
+
         # Use the callback_id inside the signal handler to allow external interrupts
         signal.signal(signal.SIGINT, self.signal_handler)
 
@@ -120,6 +75,10 @@ class ScenarioManager(object):
         """
         Terminate scenario ticking when receiving a signal interrupt
         """
+        if self._agent_watchdog and not self._agent_watchdog.get_status():
+            raise RuntimeError("Agent took longer than {}s to send its command".format(self._timeout))
+        elif self._watchdog and not self._watchdog.get_status():
+            raise RuntimeError("The simulation took longer than {}s to update".format(self._timeout))
         self._running = False
 
     def cleanup(self):
@@ -132,6 +91,10 @@ class ScenarioManager(object):
         self.start_system_time = None
         self.end_system_time = None
         self.end_game_time = None
+
+        self._spectator = None
+        self._watchdog = None
+        self._agent_watchdog = None
 
     def load_scenario(self, scenario, agent, rep_number):
         """
@@ -147,6 +110,8 @@ class ScenarioManager(object):
         self.other_actors = scenario.other_actors
         self.repetition_number = rep_number
 
+        self._spectator = CarlaDataProvider.get_world().get_spectator()
+
         # To print the scenario tree uncomment the next line
         # py_trees.display.render_dot_tree(self.scenario_tree)
 
@@ -159,7 +124,14 @@ class ScenarioManager(object):
         self.start_system_time = time.time()
         self.start_game_time = GameTime.get_time()
 
+        # Detects if the simulation is down
+        self._watchdog = Watchdog(self._timeout)
         self._watchdog.start()
+
+        # Stop the agent from freezing the simulation
+        self._agent_watchdog = Watchdog(self._timeout)
+        self._agent_watchdog.start()
+
         self._running = True
 
         while self._running:
@@ -184,9 +156,13 @@ class ScenarioManager(object):
             # Update game time and actor information
             GameTime.on_carla_tick(timestamp)
             CarlaDataProvider.on_carla_tick()
+            self._watchdog.pause()
 
             try:
+                self._agent_watchdog.resume()
+                self._agent_watchdog.update()
                 ego_action = self._agent()
+                self._agent_watchdog.pause()
 
             # Special exception inside the agent that isn't caused by the agent
             except SensorReceivedNoData as e:
@@ -195,6 +171,7 @@ class ScenarioManager(object):
             except Exception as e:
                 raise AgentError(e)
 
+            self._watchdog.resume()
             self.ego_vehicles[0].apply_control(ego_action)
 
             # Tick scenario
@@ -209,40 +186,9 @@ class ScenarioManager(object):
             if self.scenario_tree.status != py_trees.common.Status.RUNNING:
                 self._running = False
 
-            spectator = CarlaDataProvider.get_world().get_spectator()
             ego_trans = self.ego_vehicles[0].get_transform()
-
-            ego_roll, ego_pitch, ego_yaw = ego_trans.rotation.roll, ego_trans.rotation.pitch, ego_trans.rotation.yaw
-
-            if not self.ego_yaw_origin:
-                self.ego_yaw_origin = ego_yaw
-                self.ego_pitch_origin = ego_pitch
-                self.ego_roll_origin = ego_roll
-            else:
-                self.ego_yaw_diff = ego_yaw - self.ego_yaw_origin
-                self.ego_pitch_diff = ego_pitch - self.ego_pitch_origin
-                self.ego_roll_diff = ego_roll - self.ego_roll_origin
-
-            quaternion = tf.transformations.quaternion_from_euler(math.radians(ego_roll), 
-                                                                  math.radians(ego_pitch), 
-                                                                  math.radians(ego_yaw))
-
-            rot_matrix = tf.transformations.quaternion_matrix(quaternion)
-            translation = np.array([0,0,0])
-            
-            tf_ego = rot_matrix
-            tf_ego[:3,3] = tf_ego[:3,3] + translation
-
-            ori_view = t4ac_msgs.msg.Node(-5,3,3.5) # Change this to get a different perspective
-            new_view = apply_tf(ori_view, tf_ego)
-
-            # 3D view
-
-            spectator.set_transform(carla.Transform(ego_trans.location + carla.Location(x=new_view.x,y=new_view.y,z=new_view.z), 
-                                                           #carla.Rotation(roll=0,pitch=-25,yaw=20+self.ego_yaw_origin+self.ego_yaw_diff)))
-                                                           carla.Rotation(roll=0-self.ego_roll_origin-self.ego_roll_diff,
-                                                                          pitch=-25-self.ego_pitch_origin-self.ego_pitch_diff,
-                                                                          yaw=-20+self.ego_yaw_origin+self.ego_yaw_diff)))
+            self._spectator.set_transform(carla.Transform(ego_trans.location + carla.Location(z=50),
+                                                          carla.Rotation(pitch=-90)))
 
         if self._running and self.get_running_status():
             CarlaDataProvider.get_world().tick(self._timeout)
@@ -252,13 +198,19 @@ class ScenarioManager(object):
         returns:
            bool: False if watchdog exception occured, True otherwise
         """
-        return self._watchdog.get_status()
+        if self._watchdog:
+            return self._watchdog.get_status()
+        return False
 
     def stop_scenario(self):
         """
         This function triggers a proper termination of a scenario
         """
-        self._watchdog.stop()
+        if self._watchdog:
+            self._watchdog.stop()
+
+        if self._agent_watchdog:
+            self._agent_watchdog.stop()
 
         self.end_system_time = time.time()
         self.end_game_time = GameTime.get_time()

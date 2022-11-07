@@ -9,6 +9,8 @@
 CARLA Challenge Evaluator Routes
 
 Provisional code to evaluate Autonomous Agents for the CARLA Autonomous Driving challenge
+
+Modified by RobeSafe research group
 """
 from __future__ import print_function
 
