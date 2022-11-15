@@ -2,7 +2,7 @@
 <routes>
    <!-- The references (id and town) are according to the file routes_25_challenging.xml -->
    <!-- ID = 24 -> Town05: Agent Blockout & Collision Layout -->
-   <!-- <route id="0" town="Town05">
+   <route id="0" town="Town05">
       <waypoint pitch="360.0" roll="0.0" x="-47.583702087402344" y="-20.078369140625" yaw="269.6625061035156" z="0.055450439453125" />
       <waypoint pitch="360.0" roll="0.0" x="-47.877262115478516" y="-69.91573333740234" yaw="269.6625061035156" z="0.055450439453125" />
       <waypoint pitch="360.0" roll="0.0" x="-21.7053279876709" y="-87.9264907836914" yaw="0.0863037109375" z="0.0" />
@@ -60,7 +60,7 @@
       <waypoint pitch="0.0" roll="0.0" x="72.33394622802734" y="88.8797378540039" yaw="-20.77850914001465" z="0.0" />
       <waypoint pitch="0.0" roll="0.0" x="87.92076110839844" y="79.14704132080078" yaw="-43.184326171875" z="0.0" />
       <waypoint pitch="0.0" roll="0.0" x="103.15543365478516" y="19.792680740356445" yaw="-89.30083465576172" z="0.0" />
-   </route> -->
+   </route>
    <!-- ID = 12-> Town02: Agent Blockout -->
    <route id="1" town="Town02"> <!-- <route id="5" town="Town02"> -->
       <waypoint pitch="0.0" roll="0.0" x="25.936994552612305" y="105.63590240478516" yaw="-179.9838104248047" z="0.0" />

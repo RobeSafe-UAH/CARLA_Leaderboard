@@ -19,6 +19,8 @@
 #                                                       or leaderboard_cloud (if you are going to submit to the cloud)
 # N.B. Make sure this file has execution permits (chmod +x copy_debug_files.sh)
 
+# TODO: Specify by argument the routes and traffic scenarios, not hardcoded in this script
+
 if [[ $1 == "debug_local" ]] # Replace with your modified files
 then
     cp routes_xml/utils/scenario_manager_robesafe.py /workspace/leaderboard/leaderboard/scenarios/scenario_manager.py
@@ -26,6 +28,10 @@ then
     cp routes_xml/utils/statistics_manager_robesafe.py /workspace/leaderboard/leaderboard/utils/statistics_manager.py 
     cp routes_xml/utils/leaderboard_evaluator_robesafe.py /workspace/leaderboard/leaderboard/leaderboard_evaluator.py 
     cp routes_xml/utils/atomic_criteria_robesafe.py /workspace/scenario_runner/srunner/scenariomanager/scenarioatomics/atomic_criteria.py
+    
+    cp routes_xml/routes/routes_training_transfuser.xml /workspace/leaderboard/data/routes_training.xml 
+    cp routes_xml/routes/traffic_scenarios_transfuser.json /workspace/leaderboard/data/all_towns_traffic_scenarios_public.json
+
     echo "Replace with our debug files"
 
 elif [[ $1 == "leaderboard_cloud" ]] # Replace with the original files
@@ -35,5 +41,9 @@ then
     cp routes_xml/utils/statistics_manager_original.py /workspace/leaderboard/leaderboard/utils/statistics_manager.py 
     cp routes_xml/utils/leaderboard_evaluator_original.py /workspace/leaderboard/leaderboard/leaderboard_evaluator.py 
     cp routes_xml/utils/atomic_criteria_original.py /workspace/scenario_runner/srunner/scenariomanager/scenarioatomics/atomic_criteria.py
+    
+    cp routes_xml/routes/routes_training_original.xml /workspace/leaderboard/data/routes_training.xml 
+    cp routes_xml/routes/traffic_scenarios_original.json /workspace/leaderboard/data/all_towns_traffic_scenarios_public.json
+
     echo "Replace with the original files"
 fi

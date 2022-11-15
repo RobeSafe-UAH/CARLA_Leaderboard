@@ -261,9 +261,6 @@ class RobesafeAgent(AutonomousAgent):
 
         print("\033[1;31m"+"End init configuration: "+'\033[0;m')
 
-        self.cont_aux = time.time()
-        self.flag_aux = False
-
     # Specify your sensors
 
     def sensors(self):
@@ -384,12 +381,12 @@ class RobesafeAgent(AutonomousAgent):
         enabled_pose_msg = Bool()     
         gnss_pose_msg = Odometry()
         filtered_pose_msg = Odometry()
-        
+
         self.ekf, filtered_pose_msg, gnss_pose_msg, \
         self.enabled_pose, self.count_localization, self.ego_vehicle_last_yaw = \
             process_localization(self.ekf, gnss, imu, actual_speed, self.current_sim_time, self.map_frame, 
                                  self.base_link_frame, self.enabled_pose, self.count_localization, self.trajectory_flag, self.ego_vehicle_last_yaw)
-        
+
         enabled_pose_msg.data = self.enabled_pose
 
         self.trajectory_flag = False
@@ -402,7 +399,7 @@ class RobesafeAgent(AutonomousAgent):
         for camera in self.cameras_parameters:
             cameras.append(input_data[camera['id']][1]) 
         self.cameras_callback(cameras, self.current_sim_time)
-
+        
         self.lidar_callback(lidar, self.current_sim_time)
         # self.radar_callback(radar, self.current_sim_time)
         control = self.control_callback(actual_speed)
@@ -422,6 +419,8 @@ class RobesafeAgent(AutonomousAgent):
         Return the LiDAR pointcloud as a sensor_msgs.PointCloud2 ROS message based on a string that contains
         the LiDAR information
         """
+
+        start_lidar_callback = time.time()
 
         self.lidar_count += 1
 
@@ -448,6 +447,10 @@ class RobesafeAgent(AutonomousAgent):
         else:
             self.half_cloud = lidar_string_to_array(lidar)
     
+        end_lidar_callback = time.time()
+
+        # print("LiDAR callback: ", end_lidar_callback-start_lidar_callback)
+
     def radar_callback(self, radar_data, current_time):
         """
         CARLA Radar Raw Data format
@@ -498,12 +501,19 @@ class RobesafeAgent(AutonomousAgent):
         Return the information of the corresponding camera as a sensor_msgs.Image ROS message based on a string 
         that contains the camera information
         """
+
+        start_camera_callback = time.time()
+
         for index_camera, raw_image in enumerate(cameras):
             raw_image = cv2_to_imgmsg(raw_image, self.encoding)
             raw_image.header.stamp = current_time
             raw_image.header.frame_id = self.cameras_parameters[index_camera]['frame']
             
             self.cameras_parameters[index_camera]['image_raw_pub'].publish(raw_image)
+
+        end_camera_callback = time.time()
+
+        # print("Cameras callback: ", end_camera_callback-start_camera_callback)
 
     def control_callback(self, actual_speed):
         """

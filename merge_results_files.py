@@ -101,6 +101,7 @@ def calculate_metrics_per_town(df, metrics_names, min_metric):
 if __name__ == "__main__":
 
     ## parser
+
     parser = argparse.ArgumentParser()
     parser.add_argument("-exp", "--experiment", type=str, required=True)
     parser.add_argument("-of", "--output_folder", type=str, required=False)
@@ -109,6 +110,7 @@ if __name__ == "__main__":
     out_folder = args["output_folder"] if args["output_folder"] is not None else args["experiment"]
 
     ## load files
+
     files, num_files = load_list_from_folder(exp_folder)
     df_merged = [] # Only the file with statistics
 
@@ -122,6 +124,7 @@ if __name__ == "__main__":
             df_merged.append(df_rows)
 
     # merge csv
+    
     if len(df_merged) == 0:
         print("Files not found")
     if len(df_merged) > 1:
@@ -130,20 +133,22 @@ if __name__ == "__main__":
         df_merged = df_merged[0]
     
     ## metrics
+
     metric_names = ["RL", "DS", "RC", "IP", "CP", "CV", "CL", "RLI", "SSI", "ORI", "RD", "RT", "AB"]
     cp_idx = metric_names.index("CP")
 
     # town metrics
+
     town_metrics = calculate_metrics_per_town(df_merged.copy(), metric_names, cp_idx)
 
     # global metrics
+
     metrics = calculate_metrics(df_merged.copy(), metric_names, cp_idx)
     for i in range(cp_idx, len(metric_names)):
         df_merged[metric_names[i]] = df_merged[metric_names[i]].astype(str)
     global_metrics = df_merged.append(metrics, ignore_index=True)
 
     # save data
-    start_inference_data = out_folder.split('/')[-1]
 
-    town_metrics.to_csv(os.path.join(out_folder, "town_metrics_"+start_inference_data+".csv"), index_label="Id", sep="\t", na_rep="-", float_format="%.3f")
-    global_metrics.to_csv(os.path.join(out_folder, "global_metrics_"+start_inference_data+".csv"), index_label="Id", sep="\t", na_rep="-", float_format="%.3f")
+    town_metrics.to_csv(os.path.join(out_folder, "town_metrics.csv"), index_label="Id", sep="\t", na_rep="-", float_format="%.3f")
+    global_metrics.to_csv(os.path.join(out_folder, "global_metrics.csv"), index_label="Id", sep="\t", na_rep="-", float_format="%.3f")
