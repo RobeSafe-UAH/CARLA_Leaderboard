@@ -33,3 +33,12 @@
 	path = catkin_ws/src/ros-bridge
 	url = git@github.com:RobeSafe-UAH/ros-bridge.git
 	branch = 2021_carla_challenge
+[submodule "catkin_ws/src/ad_devkit"]
+	path = catkin_ws/src/ad_devkit
+	url = https://github.com/RobeSafe-UAH/ad_devkit.git
+[submodule "catkin_ws/src/ad_perdevkit"]
+	path = catkin_ws/src/ad_perdevkit
+	url = git@github.com:Cram3r95/ad_perdevkit.git
+[submodule "catkin_ws/src/t4ac_smartmot_ros"]
+	path = catkin_ws/src/t4ac_smartmot_ros
+	url = git@github.com:Cram3r95/smartmot.git

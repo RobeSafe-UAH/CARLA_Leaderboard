@@ -6,11 +6,6 @@ Created on Tue Oct 5 14:20:29 2021
 @author: RobeSafe research group
 """
 
-# CARLA imports
-
-import carla
-from leaderboard.autoagents.autonomous_agent import AutonomousAgent, Track
-
 # General use
 
 import time
@@ -18,6 +13,8 @@ import cv2
 import sys
 import os
 import subprocess
+import git
+import pdb
 
 # ROS imports
 
@@ -34,19 +31,22 @@ from cv_bridge import CvBridge
 from std_msgs.msg import Header, String, Bool, Float64
 import visualization_msgs.msg
 
-# Math and geometry imports
+# DL & Math imports
 
 import math
 import numpy as np
 
 # Custom functions imports
 
+import carla
+
+from leaderboard.autoagents.autonomous_agent import AutonomousAgent, Track
+
 from generic_modules.geometric_functions import euler_to_quaternion
 from generic_modules.bridge_functions import build_camera_info, build_camera_info_from_file, \
                                      cv2_to_imgmsg, image_rectification, \
                                      lidar_string_to_array, get_routeNodes, process_localization
-
-from generic_modules.bridge_functions import Localization_EKF
+from generic_modules.utils import str2bool
 
 from t4ac_global_planner_ros.src.lane_waypoint_planner import LaneWaypointPlanner
 from map_parser import signal_parser
@@ -297,6 +297,7 @@ class RobesafeAgent(AutonomousAgent):
 
         while (self.current_simulation_iteration_stamp <= self.previous_simulation_iteration_stamp):
             continue
+
         self.previous_simulation_iteration_stamp = self.current_simulation_iteration_stamp
 
         # Control ex.
@@ -388,7 +389,6 @@ class RobesafeAgent(AutonomousAgent):
                                  self.base_link_frame, self.enabled_pose, self.count_localization, self.trajectory_flag, self.ego_vehicle_last_yaw)
 
         enabled_pose_msg.data = self.enabled_pose
-
         self.trajectory_flag = False
 
         self.RobesafeAgentROS.publish_localization(enabled_pose_msg, filtered_pose_msg, gnss_pose_msg)
@@ -538,7 +538,7 @@ class RobesafeAgent(AutonomousAgent):
 
         brake = 0
         if (throttle < 0):
-            brake = 1 #-throttle
+            brake = 1
             throttle = 0
         if (throttle > 1):
             throttle = 1
@@ -547,6 +547,16 @@ class RobesafeAgent(AutonomousAgent):
             self.error_sum = 0  # Reset PI
             brake = 1
 
+        # Get forced stopping from the user (overwrite throttle and brake commands)
+
+        stop_car = rospy.get_param('/t4ac/operation_modes/stop_car')
+        if type(stop_car) != bool:
+            stop_car = str2bool(stop_car)
+            
+        if stop_car:
+            throttle = 0
+            brake = 1
+            
         # Return control
 
         control = carla.VehicleControl()

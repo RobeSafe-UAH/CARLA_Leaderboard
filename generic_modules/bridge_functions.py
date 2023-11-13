@@ -238,7 +238,7 @@ def process_localization(ekf, gnss, imu, actual_speed, current_ros_time, map_fra
     filtered_pose_msg.pose.pose.orientation.w = qw
     filtered_pose_msg.twist.twist.linear.x = actual_speed
 
-    if not enabled_pose:   ##Espera de 1seg converger EKF
+    if not enabled_pose:   # Espera de 1seg converger EKF
         gnss_translation_error = 0.01 # [m]  
         count_localization += 1
         if (count_localization >= 20):
